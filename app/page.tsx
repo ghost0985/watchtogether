@@ -1,65 +1,70 @@
-import Image from "next/image";
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { generateRoomCode, normalizeRoomCode } from "@/lib/room";
 
 export default function Home() {
+  const router = useRouter();
+  const [joinCode, setJoinCode] = useState("");
+
+  const createRoom = () => {
+    router.push(`/room/${generateRoomCode()}`);
+  };
+
+  const joinRoom = (e: React.FormEvent) => {
+    e.preventDefault();
+    const code = normalizeRoomCode(joinCode);
+    if (code.length === 6) router.push(`/room/${code}`);
+  };
+
+  const canJoin = normalizeRoomCode(joinCode).length === 6;
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <main className="flex flex-1 flex-col items-center justify-center gap-10 bg-neutral-950 px-6 py-16 text-neutral-100">
+      <div className="flex flex-col items-center gap-3 text-center">
+        <h1 className="text-4xl font-bold tracking-tight">WatchTogether</h1>
+        <p className="max-w-xs text-neutral-400">
+          Watch YouTube in perfect sync with someone. Create a room, share the
+          link, hit play.
+        </p>
+      </div>
+
+      <div className="flex w-full max-w-sm flex-col gap-6">
+        <button
+          onClick={createRoom}
+          className="w-full rounded-xl bg-indigo-500 px-5 py-3.5 text-base font-semibold text-white active:bg-indigo-600"
+        >
+          Create a room
+        </button>
+
+        <div className="flex items-center gap-3 text-xs text-neutral-500">
+          <span className="h-px flex-1 bg-neutral-800" />
+          or join
+          <span className="h-px flex-1 bg-neutral-800" />
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+
+        <form onSubmit={joinRoom} className="flex gap-2">
+          <input
+            type="text"
+            value={joinCode}
+            onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+            placeholder="Enter code"
+            autoCapitalize="characters"
+            autoCorrect="off"
+            spellCheck={false}
+            maxLength={6}
+            className="min-w-0 flex-1 rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-3 text-center font-mono text-lg tracking-widest text-neutral-100 placeholder:font-sans placeholder:text-base placeholder:tracking-normal placeholder:text-neutral-500 focus:border-indigo-500 focus:outline-none"
+          />
+          <button
+            type="submit"
+            disabled={!canJoin}
+            className="shrink-0 rounded-lg bg-neutral-800 px-5 py-3 text-sm font-semibold text-neutral-100 active:bg-neutral-700 disabled:opacity-40"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+            Join
+          </button>
+        </form>
+      </div>
+    </main>
   );
 }
