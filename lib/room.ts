@@ -42,3 +42,21 @@ export function getUserId(): string {
 /** PartyKit host. Defaults to the local dev server; override for production. */
 export const PARTYKIT_HOST =
   process.env.NEXT_PUBLIC_PARTYKIT_HOST ?? "127.0.0.1:1999";
+
+const DISPLAY_NAME_KEY = "wt-display-name";
+
+/** Cached display name, reused across rooms so returning users skip the prompt. */
+export function getDisplayName(): string {
+  if (typeof window === "undefined") return "";
+  return localStorage.getItem(DISPLAY_NAME_KEY) ?? "";
+}
+
+export function setDisplayName(name: string): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(DISPLAY_NAME_KEY, name);
+}
+
+/** First 1-2 characters for a compact presence avatar, e.g. "Maria" -> "M". */
+export function initials(name: string): string {
+  return name.trim().slice(0, 1).toUpperCase() || "?";
+}
