@@ -2,10 +2,12 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Play, Ticket } from "lucide-react";
 import { generateRoomCode, normalizeRoomCode } from "@/lib/room";
 
 export default function Home() {
   const router = useRouter();
+  const [showJoin, setShowJoin] = useState(false);
   const [joinCode, setJoinCode] = useState("");
 
   const createRoom = () => {
@@ -21,49 +23,61 @@ export default function Home() {
   const canJoin = normalizeRoomCode(joinCode).length === 6;
 
   return (
-    <main className="flex flex-1 flex-col items-center justify-center gap-10 bg-neutral-950 px-6 py-16 text-neutral-100">
-      <div className="flex flex-col items-center gap-3 text-center">
-        <h1 className="text-4xl font-bold tracking-tight">WatchTogether</h1>
-        <p className="max-w-xs text-neutral-400">
-          Watch YouTube in perfect sync with someone. Create a room, share the
-          link, hit play.
+    <main className="flex flex-1 flex-col">
+      <div className="px-6 pt-8">
+        <span className="text-sm font-semibold tracking-tight text-text-dim">
+          WatchTogether
+        </span>
+      </div>
+
+      {/* Quiet middle — sets the mood, no hero block */}
+      <div className="flex flex-1 flex-col items-center justify-center px-8 text-center">
+        <p className="max-w-[260px] text-[15px] leading-relaxed text-text-dim">
+          A private room for two. Paste a video, hit play, watch it together.
         </p>
       </div>
 
-      <div className="flex w-full max-w-sm flex-col gap-6">
+      {/* Primary action, kept in the bottom half for one-handed reach */}
+      <div className="flex flex-col gap-3 px-6 pb-10">
         <button
           onClick={createRoom}
-          className="w-full rounded-xl bg-indigo-500 px-5 py-3.5 text-base font-semibold text-white active:bg-indigo-600"
+          className="flex h-14 w-full items-center justify-center gap-2 rounded-full bg-accent text-base font-semibold text-white transition duration-150 ease-out active:scale-[0.98] active:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
         >
-          Create a room
+          <Play className="h-5 w-5" fill="currentColor" strokeWidth={0} />
+          Start watching
         </button>
 
-        <div className="flex items-center gap-3 text-xs text-neutral-500">
-          <span className="h-px flex-1 bg-neutral-800" />
-          or join
-          <span className="h-px flex-1 bg-neutral-800" />
-        </div>
-
-        <form onSubmit={joinRoom} className="flex gap-2">
-          <input
-            type="text"
-            value={joinCode}
-            onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-            placeholder="Enter code"
-            autoCapitalize="characters"
-            autoCorrect="off"
-            spellCheck={false}
-            maxLength={6}
-            className="min-w-0 flex-1 rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-3 text-center font-mono text-lg tracking-widest text-neutral-100 placeholder:font-sans placeholder:text-base placeholder:tracking-normal placeholder:text-neutral-500 focus:border-indigo-500 focus:outline-none"
-          />
+        {!showJoin ? (
           <button
-            type="submit"
-            disabled={!canJoin}
-            className="shrink-0 rounded-lg bg-neutral-800 px-5 py-3 text-sm font-semibold text-neutral-100 active:bg-neutral-700 disabled:opacity-40"
+            onClick={() => setShowJoin(true)}
+            className="flex h-11 items-center justify-center gap-1.5 rounded-full text-sm font-medium text-text-dim transition duration-150 ease-out active:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           >
-            Join
+            <Ticket className="h-4 w-4" />
+            Have a room code?
           </button>
-        </form>
+        ) : (
+          <form onSubmit={joinRoom} className="flex gap-2">
+            <input
+              type="text"
+              value={joinCode}
+              onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+              placeholder="Enter code"
+              autoFocus
+              autoCapitalize="characters"
+              autoCorrect="off"
+              spellCheck={false}
+              maxLength={6}
+              className="min-w-0 flex-1 rounded-2xl border border-white/6 bg-surface px-4 py-3.5 text-center font-mono text-lg tracking-[0.3em] text-text placeholder:font-sans placeholder:text-sm placeholder:tracking-normal placeholder:text-text-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            />
+            <button
+              type="submit"
+              disabled={!canJoin}
+              className="shrink-0 rounded-2xl bg-surface-2 px-5 text-sm font-semibold text-text transition duration-150 ease-out active:bg-surface disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            >
+              Join
+            </button>
+          </form>
+        )}
       </div>
     </main>
   );

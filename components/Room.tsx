@@ -3,11 +3,11 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import usePartySocket from "partysocket/react";
 import type { PartySocket } from "partysocket";
+import { Loader2, Pause, Play, Share2 } from "lucide-react";
 import { PARTYKIT_HOST, getUserId, normalizeRoomCode } from "@/lib/room";
 import { parseYouTubeId } from "@/lib/youtube";
 import { INITIAL_ROOM_STATE, type ClientMessage, type RoomState, type ServerMessage } from "@/lib/types";
 import YouTubePlayer, { type PlayerHandle } from "./YouTubePlayer";
-import { error } from "console";
 
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) seconds = 0;
@@ -83,8 +83,8 @@ export default function Room({ code }: { code: string }) {
               );
             }
           }
-        } catch (error) {
-          console.log(error)
+        } catch {
+          /* ignore */
         }
       }
     },
@@ -133,7 +133,7 @@ export default function Room({ code }: { code: string }) {
     e.preventDefault();
     const id = parseYouTubeId(videoInput);
     if (!id) {
-      setInputError("Enter a valid YouTube link or video ID.");
+      setInputError("That doesn't look like a YouTube link.");
       return;
     }
     setInputError(null);
@@ -158,16 +158,15 @@ export default function Room({ code }: { code: string }) {
   };
 
   return (
-    <div className="flex min-h-full flex-col bg-neutral-950 text-neutral-100">
+    <div className="flex min-h-full flex-col animate-room-enter">
       {/* Header: room code + connection status */}
-      <header className="flex items-center justify-between gap-3 px-4 py-3">
+      <header className="flex items-center justify-between gap-3 px-4 py-4">
         <div className="flex items-center gap-2">
-          <span className="text-sm text-neutral-400">Room</span>
-          <span className="font-mono text-lg font-semibold tracking-widest">
+          <span className="rounded-2xl border border-white/6 bg-surface px-3 py-1.5 font-mono text-base tracking-[0.2em] text-text">
             {roomId}
           </span>
           {isHost && (
-            <span className="rounded-full bg-indigo-500/20 px-2 py-0.5 text-xs font-medium text-indigo-300">
+            <span className="rounded-full bg-surface-2 px-2.5 py-1 text-xs font-medium text-text-dim">
               Host
             </span>
           )}
@@ -175,21 +174,30 @@ export default function Room({ code }: { code: string }) {
         <div className="flex items-center gap-3">
           <button
             onClick={copyLink}
-            className="rounded-md bg-neutral-800 px-3 py-1.5 text-xs font-medium text-neutral-200 active:bg-neutral-700"
+            className="flex h-11 items-center gap-1.5 rounded-full bg-surface-2 px-3.5 text-xs font-medium text-text transition duration-150 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           >
-            {copied ? "Copied!" : "Copy link"}
+            <Share2 className="h-3.5 w-3.5" />
+            {copied ? "Copied" : "Copy link"}
           </button>
           <span
-            className={`h-2.5 w-2.5 rounded-full ${
-              connected ? "bg-emerald-400" : "bg-amber-400 animate-pulse"
-            }`}
-            title={connected ? "Connected" : "Reconnecting…"}
+            role="status"
+            aria-label={connected ? "Connected" : "Reconnecting"}
+            className={`h-2.5 w-2.5 rounded-full transition-colors duration-150 ease-out ${
+              connected ? "bg-ok" : "bg-text-dim"
+            } ${connected && serverState.isPlaying ? "motion-safe:animate-pulse" : ""}`}
           />
         </div>
       </header>
 
-      {/* Video */}
-      <div className="relative w-full aspect-video bg-black">
+      {connected === false && (
+        <div className="mx-4 mb-2 flex items-center gap-2 rounded-2xl border border-white/6 bg-surface px-4 py-3 text-sm text-text-dim">
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+          Lost connection — reconnecting…
+        </div>
+      )}
+
+      {/* Video: always full-bleed, nothing sits beside it */}
+      <div className="relative w-full aspect-video bg-bg">
         {hasVideo ? (
           <YouTubePlayer
             ref={playerRef}
@@ -200,10 +208,10 @@ export default function Room({ code }: { code: string }) {
           />
         ) : (
           <div className="absolute inset-0 flex items-center justify-center px-6 text-center">
-            <p className="text-neutral-500">
+            <p className="max-w-[240px] text-[15px] leading-relaxed text-text-dim">
               {isHost
-                ? "Paste a YouTube link below to start the party."
-                : "Waiting for the host to pick a video…"}
+                ? "Paste a YouTube link to start the show."
+                : "Waiting for the host to press play."}
             </p>
           </div>
         )}
@@ -212,12 +220,12 @@ export default function Room({ code }: { code: string }) {
         {hasVideo && !active && (
           <button
             onClick={handleJoinPlayback}
-            className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-black/60 backdrop-blur-sm"
+            className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-bg/70 backdrop-blur-sm focus-visible:outline-none"
           >
-            <span className="flex h-16 w-16 items-center justify-center rounded-full bg-white/90 text-black">
-              <PlayIcon className="h-8 w-8 translate-x-0.5" />
+            <span className="flex h-16 w-16 items-center justify-center rounded-full bg-accent text-white">
+              <Play className="h-7 w-7 translate-x-0.5" fill="currentColor" strokeWidth={0} />
             </span>
-            <span className="text-sm font-medium text-white">Tap to join playback</span>
+            <span className="text-sm font-medium text-text">Tap to join playback</span>
           </button>
         )}
 
@@ -233,21 +241,21 @@ export default function Room({ code }: { code: string }) {
       </div>
 
       {/* Control bar */}
-      <div className="flex items-center gap-3 px-4 py-3">
+      <div className="flex items-center gap-3 border-t border-white/6 px-4 py-3">
         <button
           onClick={togglePlayPause}
           disabled={!hasVideo}
           aria-label={serverState.isPlaying ? "Pause" : "Play"}
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white text-black disabled:opacity-40 active:scale-95"
+          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-accent text-white transition duration-150 ease-out active:scale-95 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
         >
           {serverState.isPlaying ? (
-            <PauseIcon className="h-5 w-5" />
+            <Pause className="h-5 w-5" fill="currentColor" strokeWidth={0} />
           ) : (
-            <PlayIcon className="h-5 w-5 translate-x-0.5" />
+            <Play className="h-5 w-5 translate-x-0.5" fill="currentColor" strokeWidth={0} />
           )}
         </button>
 
-        <span className="w-12 shrink-0 text-right font-mono text-xs text-neutral-400">
+        <span className="w-12 shrink-0 text-right font-mono text-xs text-text-dim">
           {formatTime(sliderValue)}
         </span>
 
@@ -264,52 +272,39 @@ export default function Room({ code }: { code: string }) {
           }}
           onPointerUp={() => dragging && commitSeek(dragValue)}
           onKeyUp={() => dragging && commitSeek(dragValue)}
-          className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-neutral-700 accent-indigo-500 disabled:opacity-40"
+          className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-surface-2 accent-accent disabled:opacity-40"
         />
 
-        <span className="w-12 shrink-0 font-mono text-xs text-neutral-400">
+        <span className="w-12 shrink-0 font-mono text-xs text-text-dim">
           {formatTime(duration)}
         </span>
       </div>
 
       {/* Host-only video picker */}
       {isHost && (
-        <form onSubmit={handleLoadVideo} className="flex flex-col gap-2 px-4 py-3">
+        <form
+          onSubmit={handleLoadVideo}
+          className="flex flex-col gap-2 border-t border-white/6 bg-surface px-4 py-4"
+        >
           <div className="flex gap-2">
             <input
               type="text"
               inputMode="url"
               value={videoInput}
               onChange={(e) => setVideoInput(e.target.value)}
-              placeholder="Paste a YouTube link or video ID"
-              className="min-w-0 flex-1 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2.5 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-indigo-500 focus:outline-none"
+              placeholder="Paste a YouTube link"
+              className="min-w-0 flex-1 rounded-2xl border border-white/6 bg-surface-2 px-4 py-3 text-sm text-text placeholder:text-text-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             />
             <button
               type="submit"
-              className="shrink-0 rounded-lg bg-indigo-500 px-4 py-2.5 text-sm font-semibold text-white active:bg-indigo-600"
+              className="shrink-0 rounded-2xl bg-accent px-4 py-3 text-sm font-semibold text-white transition duration-150 ease-out active:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
             >
-              Load
+              Load video
             </button>
           </div>
-          {inputError && <p className="text-xs text-red-400">{inputError}</p>}
+          {inputError && <p className="text-xs text-text-dim">{inputError}</p>}
         </form>
       )}
     </div>
-  );
-}
-
-function PlayIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden>
-      <path d="M8 5v14l11-7z" />
-    </svg>
-  );
-}
-
-function PauseIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden>
-      <path d="M6 5h4v14H6zM14 5h4v14h-4z" />
-    </svg>
   );
 }

@@ -31,6 +31,64 @@ Solo dev (Logan), building in Claude Code. Portfolio-quality project: real-time 
 
 ## Build phases (each phase = deployed and working before the next)
 
+## Design system — WatchTogether
+
+The app is a private cinema for two people. Every design decision should serve that: intimate, dark, video-first, zero clutter. If a screen would look at home in a SaaS dashboard, it's wrong.
+
+### Vibe
+Late-night movie theater for two. The video is the stage; everything else is the dark room around it. References: Apple TV's player (controls that get out of the way), Letterboxd (dark, filmic, personal), Spotify Jam (playful togetherness without noise). Anti-references: Discord (too busy), generic SaaS landing pages, anything with purple-blue gradients.
+
+### Color tokens (define in Tailwind config, never use raw hex in components)
+- `bg`        #0B0B0F — near-black with a hint of blue, the "dark theater" base
+- `surface`   #15151C — cards, sheets, input fields
+- `surface-2` #1E1E27 — hover states, elevated elements
+- `text`      #F4F4F6 — primary text
+- `text-dim`  #8B8B98 — timestamps, labels, secondary info
+- `accent`    #FF4E45 — warm signal red. ONE accent. Used only for: live/playing indicators, primary action button, her presence dot. Never for decoration, never in gradients.
+- `ok`        #3DDC97 — connected/synced states only
+
+Rule: any screen should be ~90% bg/surface tones, ~8% text, ~2% accent. If accent appears more than 3 times on a screen, cut some.
+
+### Typography
+- Display/UI: **Inter** — weights 400, 600, 700 only. Tight tracking (-0.02em) on headings.
+- Room codes and timestamps: **JetBrains Mono** — the room code is a ticket stub; monospace makes it feel like an object worth sharing.
+- No third font. No font weights outside the three listed.
+- Body text 15–16px on mobile, line-height 1.5. Headings rarely exceed 24px — this is a companion app, not a marketing site.
+
+### Layout & spacing
+- 4px spacing grid. Common values: 8, 12, 16, 24.
+- Mobile portrait is the ONLY first-class layout. Design at 390px wide; desktop just gets a centered column (max-w-md) — do not build separate desktop layouts in v1.
+- Video is always full-bleed edge-to-edge at the top. Nothing ever sits beside the video.
+- Chat lives in a bottom sheet: peeks ~30% by default, drags up over the video (video keeps playing, shrinks to a pinned mini-bar when sheet is full).
+- Corners: rounded-2xl on sheets and cards, rounded-full on pills/buttons. Borders (1px, white at 6% opacity) instead of shadows — shadows don't read on near-black.
+
+### Signature element
+The **sync pulse**: a thin accent-colored ring around both users' presence avatars that pulses softly in unison when playback is synced, and breaks/dims when someone drifts or disconnects. It's the one piece of ornament in the app, and it communicates the app's entire reason to exist: "we're watching this together, right now."
+
+### Motion
+- One orchestrated moment: joining a room — dark screen, room title fades in, video surface rises, presence dots pop in. ~600ms total, then never seen again.
+- Everything else: 150–200ms ease-out on state changes. No scroll animations, no floating blobs, no parallax.
+- Respect `prefers-reduced-motion`: disable the pulse and join sequence, keep instant transitions.
+
+### Copy voice
+- Warm, plain, second person. "Waiting for Maria to join" not "1 participant pending."
+- Buttons say what they do: "Start watching," "Share room," "Turn on mic."
+- Errors say what happened and what to do: "Lost connection — reconnecting…" with a spinner, not "Something went wrong."
+- Empty room state is an invitation: "Paste a YouTube link to start the show."
+- No exclamation points in UI. No emoji in UI (fine in chat messages, obviously).
+
+### Quality floor (non-negotiable, applies to every screen)
+- Tap targets ≥ 44px. One-handed reachability: primary actions in the bottom half of the screen.
+- Visible focus states (accent ring) for keyboard users.
+- Test every screen on a real phone before calling it done — screenshot it and critique it.
+
+### Never
+- Gradients of any kind
+- More than one accent color
+- Emoji as UI icons (use lucide-react)
+- Centered hero sections with big headline + subtitle + two buttons (SaaS template smell)
+- Light mode (v1 is dark only — it's a movie app)
+
 ### Phase 1 — Rooms + synced player (the core)
 - Landing page: "Create room" → generates 6-char room code, routes to `/room/[code]`
 - Join by entering code or opening the link directly

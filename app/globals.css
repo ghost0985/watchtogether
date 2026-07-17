@@ -1,26 +1,46 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
+/* WatchTogether design system — dark only, no light mode (see CLAUDE.md). */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-bg: #0b0b0f;
+  --color-surface: #15151c;
+  --color-surface-2: #1e1e27;
+  --color-text: #f4f4f6;
+  --color-text-dim: #8b8b98;
+  --color-accent: #ff4e45;
+  --color-ok: #3ddc97;
+
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-jetbrains-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  color-scheme: dark;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+/* The one orchestrated moment: entering a room. Never replayed after mount. */
+@keyframes room-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-room-enter {
+  animation: room-enter 400ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-room-enter {
+    animation: none;
+  }
 }
