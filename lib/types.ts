@@ -20,11 +20,26 @@ export type Participant = {
   userId: string;
   name: string;
   connected: boolean;
+  /** ISO 639-1 code, e.g. "en". Defaults to English until they set otherwise. */
+  language: string;
 };
 
-/** A chat bubble or a system notice ("X joined the room"), in one ordered feed. */
+/**
+ * A chat bubble or a system notice ("X joined the room"), in one ordered feed.
+ * `translations` (chat only) maps a language code -> translated text, filled in
+ * client-side before sending by calling /api/translate. The server never calls
+ * Gemini itself — it just relays whatever the sender already translated.
+ */
 export type FeedItem =
-  | { kind: "chat"; id: string; userId: string; name: string; text: string; timestamp: number }
+  | {
+      kind: "chat";
+      id: string;
+      userId: string;
+      name: string;
+      text: string;
+      timestamp: number;
+      translations?: Record<string, string>;
+    }
   | { kind: "system"; id: string; text: string; timestamp: number };
 
 /** Intents sent client -> server. loadVideo is host-only (enforced server-side). */
@@ -34,7 +49,8 @@ export type ClientMessage =
   | { type: "pause"; positionSeconds: number }
   | { type: "seek"; positionSeconds: number }
   | { type: "setName"; name: string }
-  | { type: "chat"; text: string };
+  | { type: "setLanguage"; language: string }
+  | { type: "chat"; text: string; translations?: Record<string, string> };
 
 /** Broadcasts server -> client. */
 export type ServerMessage =

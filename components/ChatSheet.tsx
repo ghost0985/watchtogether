@@ -3,10 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Send } from "lucide-react";
 import type { FeedItem } from "@/lib/types";
+import LanguagePicker from "./LanguagePicker";
 
 type Props = {
   feed: FeedItem[];
   myUserId: string;
+  myLanguage: string;
+  onLanguageChange: (code: string) => void;
   expanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
   onSend: (text: string) => void;
@@ -17,9 +20,18 @@ type Props = {
 const PEEK_VH = 0.32;
 const FULL_VH = 0.82;
 
-export default function ChatSheet({ feed, myUserId, expanded, onExpandedChange, onSend }: Props) {
+export default function ChatSheet({
+  feed,
+  myUserId,
+  myLanguage,
+  onLanguageChange,
+  expanded,
+  onExpandedChange,
+  onSend,
+}: Props) {
   const [text, setText] = useState("");
   const [dragHeight, setDragHeight] = useState<number | null>(null);
+  const [showOriginalIds, setShowOriginalIds] = useState<Set<string>>(new Set());
   const dragRef = useRef<{ startY: number; startHeight: number; moved: boolean } | null>(null);
   const justDraggedRef = useRef(false);
   const listRef = useRef<HTMLDivElement>(null);
@@ -69,6 +81,15 @@ export default function ChatSheet({ feed, myUserId, expanded, onExpandedChange, 
     onExpandedChange(!expanded);
   };
 
+  const toggleShowOriginal = (id: string) => {
+    setShowOriginalIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = text.trim();
@@ -86,16 +107,21 @@ export default function ChatSheet({ feed, myUserId, expanded, onExpandedChange, 
       }`}
       style={isDragging ? { height: dragHeight } : undefined}
     >
-      <button
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onClick={handleHandleClick}
-        aria-label={expanded ? "Collapse chat" : "Expand chat"}
-        className="flex h-6 w-full shrink-0 touch-none select-none items-center justify-center"
-      >
-        <span className="h-1 w-10 rounded-full bg-white/15" />
-      </button>
+      <div className="relative flex h-8 w-full shrink-0 items-center justify-center">
+        <button
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onClick={handleHandleClick}
+          aria-label={expanded ? "Collapse chat" : "Expand chat"}
+          className="flex h-8 w-full touch-none select-none items-center justify-center"
+        >
+          <span className="h-1 w-10 rounded-full bg-white/15" />
+        </button>
+        <div className="absolute right-3">
+          <LanguagePicker value={myLanguage} onChange={onLanguageChange} />
+        </div>
+      </div>
 
       <div ref={listRef} className="flex-1 overflow-y-auto px-4 pb-2">
         {feed.length === 0 ? (
@@ -104,25 +130,40 @@ export default function ChatSheet({ feed, myUserId, expanded, onExpandedChange, 
           </p>
         ) : (
           <ul className="flex flex-col gap-2 py-2">
-            {feed.map((item) =>
-              item.kind === "system" ? (
-                <li key={item.id} className="py-1 text-center text-xs text-text-dim">
-                  {item.text}
-                </li>
-              ) : (
+            {feed.map((item) => {
+              if (item.kind === "system") {
+                return (
+                  <li key={item.id} className="py-1 text-center text-xs text-text-dim">
+                    {item.text}
+                  </li>
+                );
+              }
+
+              const isMine = item.userId === myUserId;
+              const translation = !isMine ? item.translations?.[myLanguage] : undefined;
+              const showingOriginal = showOriginalIds.has(item.id);
+              const displayText = translation && !showingOriginal ? translation : item.text;
+
+              return (
                 <li
                   key={item.id}
                   className={`flex max-w-[80%] flex-col gap-0.5 rounded-2xl bg-surface-2 px-3.5 py-2 ${
-                    item.userId === myUserId ? "ml-auto items-end" : "items-start"
+                    isMine ? "ml-auto items-end" : "items-start"
                   }`}
                 >
-                  {item.userId !== myUserId && (
-                    <span className="text-xs font-medium text-text-dim">{item.name}</span>
+                  {!isMine && <span className="text-xs font-medium text-text-dim">{item.name}</span>}
+                  <span className="text-[15px] leading-relaxed text-text">{displayText}</span>
+                  {translation && (
+                    <button
+                      onClick={() => toggleShowOriginal(item.id)}
+                      className="text-xs text-text-dim underline decoration-dotted underline-offset-2"
+                    >
+                      {showingOriginal ? "Show translation" : "Show original"}
+                    </button>
                   )}
-                  <span className="text-[15px] leading-relaxed text-text">{item.text}</span>
                 </li>
-              )
-            )}
+              );
+            })}
           </ul>
         )}
       </div>

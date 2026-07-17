@@ -1,12 +1,14 @@
 import type * as Party from "partykit/server";
 import type { ClientMessage, FeedItem, Participant, ServerMessage, RoomState } from "../lib/types";
 import { INITIAL_ROOM_STATE } from "../lib/types";
+import { LANGUAGES } from "../lib/languages";
 
 type ConnState = { userId: string };
 
 const MAX_FEED_ITEMS = 200;
 const MAX_NAME_LENGTH = 24;
 const MAX_MESSAGE_LENGTH = 500;
+const VALID_LANGUAGE_CODES = new Set(LANGUAGES.map((l) => l.code));
 
 /**
  * Authoritative watch-party room. Holds playback state, the participant
@@ -41,7 +43,7 @@ export default class WatchRoom implements Party.Server {
   private getOrCreateParticipant(userId: string): Participant {
     let participant = this.participants.get(userId);
     if (!participant) {
-      participant = { userId, name: "", connected: false };
+      participant = { userId, name: "", connected: false, language: "en" };
       this.participants.set(userId, participant);
     }
     return participant;
@@ -155,11 +157,30 @@ export default class WatchRoom implements Party.Server {
         }
         break;
       }
+      case "setLanguage": {
+        if (!VALID_LANGUAGE_CODES.has(message.language)) return;
+        const participant = this.getOrCreateParticipant(senderId);
+        participant.language = message.language;
+        break;
+      }
       case "chat": {
         const participant = this.participants.get(senderId);
         if (!participant?.connected) return;
         const text = message.text.trim().slice(0, MAX_MESSAGE_LENGTH);
         if (!text) return;
+
+        // Translations are produced client-side (see /api/translate) and just
+        // relayed here — sanitize to known language codes and non-empty strings.
+        let translations: Record<string, string> | undefined;
+        if (message.translations) {
+          for (const [code, value] of Object.entries(message.translations)) {
+            if (VALID_LANGUAGE_CODES.has(code) && typeof value === "string" && value.trim()) {
+              translations ??= {};
+              translations[code] = value.trim();
+            }
+          }
+        }
+
         this.pushFeedItem({
           kind: "chat",
           id: crypto.randomUUID(),
@@ -167,6 +188,7 @@ export default class WatchRoom implements Party.Server {
           name: participant.name,
           text,
           timestamp: now,
+          translations,
         });
         return; // chat doesn't touch playback state; no state broadcast needed
       }

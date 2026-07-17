@@ -60,3 +60,16 @@ export function setDisplayName(name: string): void {
 export function initials(name: string): string {
   return name.trim().slice(0, 1).toUpperCase() || "?";
 }
+
+const LANGUAGE_KEY = "wt-language";
+
+/** Cached display-language preference, reused across rooms. Defaults to English. */
+export function getLanguagePref(): string {
+  if (typeof window === "undefined") return "en";
+  return localStorage.getItem(LANGUAGE_KEY) ?? "en";
+}
+
+export function setLanguagePref(code: string): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(LANGUAGE_KEY, code);
+}

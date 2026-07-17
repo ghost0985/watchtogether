@@ -4,7 +4,15 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import usePartySocket from "partysocket/react";
 import type { PartySocket } from "partysocket";
 import { Check, Loader2, Pause, Play, Share2 } from "lucide-react";
-import { PARTYKIT_HOST, getDisplayName, getUserId, normalizeRoomCode, setDisplayName } from "@/lib/room";
+import {
+  PARTYKIT_HOST,
+  getDisplayName,
+  getLanguagePref,
+  getUserId,
+  normalizeRoomCode,
+  setDisplayName,
+  setLanguagePref,
+} from "@/lib/room";
 import { parseYouTubeId } from "@/lib/youtube";
 import { INITIAL_ROOM_STATE, type ClientMessage, type FeedItem, type RoomState, type ServerMessage } from "@/lib/types";
 import YouTubePlayer, { type PlayerHandle } from "./YouTubePlayer";
@@ -27,6 +35,7 @@ export default function Room({ code }: { code: string }) {
   const roomId = useMemo(() => normalizeRoomCode(code), [code]);
   const [userId] = useState(() => getUserId());
   const [myName, setMyName] = useState(() => getDisplayName());
+  const [myLanguage, setMyLanguage] = useState(() => getLanguagePref());
 
   const [serverState, setServerState] = useState<RoomState>(INITIAL_ROOM_STATE);
   const [clockOffset, setClockOffset] = useState(0);
@@ -52,6 +61,8 @@ export default function Room({ code }: { code: string }) {
   serverStateRef.current = serverState;
   const myNameRef = useRef(myName);
   myNameRef.current = myName;
+  const myLanguageRef = useRef(myLanguage);
+  myLanguageRef.current = myLanguage;
 
   const cacheKey = `wt-state-${roomId}`;
 
@@ -67,6 +78,9 @@ export default function Room({ code }: { code: string }) {
           JSON.stringify({ type: "setName", name: myNameRef.current } satisfies ClientMessage)
         );
       }
+      socketRef.current?.send(
+        JSON.stringify({ type: "setLanguage", language: myLanguageRef.current } satisfies ClientMessage)
+      );
     },
     onClose: () => setConnected(false),
     onMessage: (event: MessageEvent) => {
@@ -185,8 +199,41 @@ export default function Room({ code }: { code: string }) {
     send({ type: "setName", name });
   };
 
-  const handleSendChat = (text: string) => {
-    send({ type: "chat", text });
+  const handleLanguageChange = (code: string) => {
+    setMyLanguage(code);
+    setLanguagePref(code);
+    send({ type: "setLanguage", language: code });
+  };
+
+  const handleSendChat = async (text: string) => {
+    // Translate for whoever else is in the room and reading in a different
+    // language. No API call at all for an all-English (or same-language) room.
+    const targetLanguages = Array.from(
+      new Set(
+        serverState.participants
+          .filter((p) => p.name && p.connected && p.userId !== userId && p.language !== myLanguage)
+          .map((p) => p.language)
+      )
+    );
+
+    let translations: Record<string, string> | undefined;
+    if (targetLanguages.length > 0) {
+      try {
+        const res = await fetch("/api/translate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text, targetLanguages }),
+        });
+        const data = await res.json();
+        if (data?.translations && typeof data.translations === "object") {
+          translations = data.translations;
+        }
+      } catch {
+        /* translation unavailable; send without it */
+      }
+    }
+
+    send({ type: "chat", text, translations });
   };
 
   const copyLink = async () => {
@@ -361,6 +408,8 @@ export default function Room({ code }: { code: string }) {
       <ChatSheet
         feed={feed}
         myUserId={userId}
+        myLanguage={myLanguage}
+        onLanguageChange={handleLanguageChange}
         expanded={sheetExpanded}
         onExpandedChange={setSheetExpanded}
         onSend={handleSendChat}
