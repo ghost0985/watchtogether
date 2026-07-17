@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import usePartySocket from "partysocket/react";
 import type { PartySocket } from "partysocket";
-import { Check, Loader2, Pause, Play, Share2 } from "lucide-react";
+import { Check, Loader2, Mic, MicOff, Pause, Play, Share2 } from "lucide-react";
 import {
   PARTYKIT_HOST,
   getDisplayName,
@@ -14,7 +14,8 @@ import {
   setLanguagePref,
 } from "@/lib/room";
 import { parseYouTubeId } from "@/lib/youtube";
-import { INITIAL_ROOM_STATE, type ClientMessage, type FeedItem, type RoomState, type ServerMessage } from "@/lib/types";
+import { INITIAL_ROOM_STATE, type ClientMessage, type FeedItem, type RoomState, type RtcSignal, type ServerMessage } from "@/lib/types";
+import { useVoice } from "@/lib/useVoice";
 import YouTubePlayer, { type PlayerHandle } from "./YouTubePlayer";
 import NamePrompt from "./NamePrompt";
 import ChatSheet from "./ChatSheet";
@@ -63,6 +64,11 @@ export default function Room({ code }: { code: string }) {
   myNameRef.current = myName;
   const myLanguageRef = useRef(myLanguage);
   myLanguageRef.current = myLanguage;
+  // Assigned once `voice` exists further down. Safe to read from the socket's
+  // onMessage callback despite the later assignment: a WebSocket message can
+  // only arrive after this render has finished running (same trick used by
+  // the refs above).
+  const voiceHandleSignalRef = useRef<(from: string, signal: RtcSignal) => void>(() => {});
 
   const cacheKey = `wt-state-${roomId}`;
 
@@ -97,6 +103,10 @@ export default function Room({ code }: { code: string }) {
       }
       if (message.type === "feedItem") {
         setFeed((prev) => [...prev, message.item]);
+        return;
+      }
+      if (message.type === "rtc-signal") {
+        voiceHandleSignalRef.current(message.from, message.signal);
         return;
       }
 
@@ -134,6 +144,11 @@ export default function Room({ code }: { code: string }) {
   const send = useCallback((message: ClientMessage) => {
     socketRef.current?.send(JSON.stringify(message));
   }, []);
+
+  const voice = useVoice({ userId, participants: serverState.participants, send });
+  useEffect(() => {
+    voiceHandleSignalRef.current = voice.handleSignal;
+  }, [voice.handleSignal]);
 
   const isHost = serverState.hostId != null && serverState.hostId === userId;
   const hasVideo = serverState.videoId != null;
@@ -270,6 +285,16 @@ export default function Room({ code }: { code: string }) {
           <div className="flex items-center gap-3">
             <Presence participants={serverState.participants} synced={synced} />
             <button
+              onClick={voice.toggleMic}
+              aria-label={voice.myMicOn === null ? "Turn on mic" : voice.myMicOn ? "Mute mic" : "Unmute mic"}
+              title={voice.myMicOn === null ? "Turn on mic" : voice.myMicOn ? "Mute mic" : "Unmute mic"}
+              className={`flex h-11 w-11 items-center justify-center rounded-full transition duration-150 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+                voice.myMicOn ? "bg-accent text-white" : "bg-surface-2 text-text-dim"
+              }`}
+            >
+              {voice.myMicOn ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
+            </button>
+            <button
               onClick={copyLink}
               aria-label={copied ? "Copied" : "Copy link"}
               title={copied ? "Copied" : "Copy link"}
@@ -284,6 +309,12 @@ export default function Room({ code }: { code: string }) {
           <div className="mx-4 mb-2 flex items-center gap-2 rounded-2xl border border-white/6 bg-surface px-4 py-3 text-sm text-text-dim">
             <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
             Lost connection — reconnecting…
+          </div>
+        )}
+
+        {voice.micError && (
+          <div className="mx-4 mb-2 rounded-2xl border border-white/6 bg-surface px-4 py-3 text-sm text-text-dim">
+            {voice.micError}
           </div>
         )}
 
@@ -414,6 +445,22 @@ export default function Room({ code }: { code: string }) {
         onExpandedChange={setSheetExpanded}
         onSend={handleSendChat}
       />
+
+      {Array.from(voice.remoteStreams.entries()).map(([id, stream]) => (
+        <audio
+          key={id}
+          autoPlay
+          playsInline
+          ref={(el) => {
+            if (!el) return;
+            if (el.srcObject !== stream) el.srcObject = stream;
+            // Autoplay can still be blocked even after an earlier mic-button
+            // gesture (iOS Safari in particular) — retry play() explicitly
+            // rather than leaving the remote party silently inaudible.
+            el.play().catch(() => {});
+          }}
+        />
+      ))}
     </>
   );
 }

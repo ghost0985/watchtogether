@@ -22,7 +22,21 @@ export type Participant = {
   connected: boolean;
   /** ISO 639-1 code, e.g. "en". Defaults to English until they set otherwise. */
   language: string;
+  /**
+   * Voice state: `null` = hasn't joined voice this session (never tapped the
+   * mic button); `true`/`false` = joined and currently un/muted. Once joined,
+   * a peer connection persists across mute toggles — only tearing down on
+   * disconnect — so muting never has to redo microphone permission or ICE.
+   */
+  micOn: boolean | null;
 };
+
+/** An offer/answer/ICE-candidate signal relayed peer-to-peer through PartyKit
+ * (no external signaling service — see CLAUDE.md's voice architecture note). */
+export type RtcSignal =
+  | { kind: "offer"; sdp: string }
+  | { kind: "answer"; sdp: string }
+  | { kind: "ice"; candidate: RTCIceCandidateInit };
 
 /**
  * A chat bubble or a system notice ("X joined the room"), in one ordered feed.
@@ -50,7 +64,11 @@ export type ClientMessage =
   | { type: "seek"; positionSeconds: number }
   | { type: "setName"; name: string }
   | { type: "setLanguage"; language: string }
-  | { type: "chat"; text: string; translations?: Record<string, string> };
+  | { type: "chat"; text: string; translations?: Record<string, string> }
+  | { type: "setMic"; on: boolean }
+  /** Targeted WebRTC signaling relay — the server forwards this to `to` only,
+   * it never inspects or broadcasts it. */
+  | { type: "rtc-signal"; to: string; signal: RtcSignal };
 
 /** Broadcasts server -> client. */
 export type ServerMessage =
@@ -59,7 +77,9 @@ export type ServerMessage =
   /** Sent once, right after connecting: full chat/system history so far. */
   | { type: "feedHistory"; items: FeedItem[] }
   /** A single new chat message or system notice, broadcast as it happens. */
-  | { type: "feedItem"; item: FeedItem };
+  | { type: "feedItem"; item: FeedItem }
+  /** Relayed 1:1 from another participant's "rtc-signal" client message. */
+  | { type: "rtc-signal"; from: string; signal: RtcSignal };
 
 export const INITIAL_ROOM_STATE: RoomState = {
   videoId: null,

@@ -24,6 +24,9 @@ export default class WatchRoom implements Party.Server {
   state: RoomState = { ...INITIAL_ROOM_STATE, participants: [] };
   participants = new Map<string, Participant>();
   feed: FeedItem[] = [];
+  /** For targeted WebRTC signaling relay (not broadcast). Keyed by userId so a
+   * reconnect naturally replaces the stale entry. */
+  connectionsByUserId = new Map<string, Party.Connection>();
 
   constructor(readonly room: Party.Room) {}
 
@@ -43,7 +46,7 @@ export default class WatchRoom implements Party.Server {
   private getOrCreateParticipant(userId: string): Participant {
     let participant = this.participants.get(userId);
     if (!participant) {
-      participant = { userId, name: "", connected: false, language: "en" };
+      participant = { userId, name: "", connected: false, language: "en", micOn: null };
       this.participants.set(userId, participant);
     }
     return participant;
@@ -72,6 +75,7 @@ export default class WatchRoom implements Party.Server {
     const userId =
       new URL(ctx.request.url).searchParams.get("userId") ?? conn.id;
     conn.setState({ userId } satisfies ConnState);
+    this.connectionsByUserId.set(userId, conn);
 
     // First person into the room becomes host (persists across their reconnects
     // because the id is stable in their localStorage).
@@ -90,10 +94,19 @@ export default class WatchRoom implements Party.Server {
 
   async onClose(conn: Party.Connection) {
     const userId = this.userId(conn);
+    // Only clear the registry entry if a later reconnect hasn't already
+    // replaced it (avoids a stale onClose deleting a fresh connection).
+    if (this.connectionsByUserId.get(userId) === conn) {
+      this.connectionsByUserId.delete(userId);
+    }
+
     const participant = this.participants.get(userId);
     if (!participant?.connected) return;
 
     participant.connected = false;
+    // Voice is session-scoped: a rejoin should start from "not in voice"
+    // rather than resume a peer connection that's already gone.
+    participant.micOn = null;
     this.pushFeedItem({
       kind: "system",
       id: crypto.randomUUID(),
@@ -191,6 +204,20 @@ export default class WatchRoom implements Party.Server {
           translations,
         });
         return; // chat doesn't touch playback state; no state broadcast needed
+      }
+      case "setMic": {
+        const participant = this.participants.get(senderId);
+        if (!participant?.connected) return;
+        participant.micOn = message.on;
+        break;
+      }
+      case "rtc-signal": {
+        // Direct relay only — never broadcast, never inspected/stored here.
+        const target = this.connectionsByUserId.get(message.to);
+        target?.send(
+          JSON.stringify({ type: "rtc-signal", from: senderId, signal: message.signal } satisfies ServerMessage)
+        );
+        return;
       }
       default:
         return;
