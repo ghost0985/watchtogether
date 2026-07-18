@@ -3,7 +3,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import usePartySocket from "partysocket/react";
 import type { PartySocket } from "partysocket";
-import { Check, Loader2, Mic, MicOff, Pause, Play, Share2 } from "lucide-react";
+import {
+  Check,
+  Loader2,
+  Maximize2,
+  MessageCircle,
+  Mic,
+  MicOff,
+  Minimize2,
+  Pause,
+  Play,
+  Share2,
+} from "lucide-react";
 import {
   PARTYKIT_HOST,
   getDisplayName,
@@ -15,11 +26,13 @@ import {
 } from "@/lib/room";
 import { parseYouTubeId } from "@/lib/youtube";
 import { INITIAL_ROOM_STATE, type ClientMessage, type FeedItem, type RoomState, type RtcSignal, type ServerMessage } from "@/lib/types";
+import { useMediaQuery } from "@/lib/useMediaQuery";
 import { useVoice } from "@/lib/useVoice";
 import YouTubePlayer, { type PlayerHandle } from "./YouTubePlayer";
 import NamePrompt from "./NamePrompt";
 import ChatSheet from "./ChatSheet";
 import Presence from "./Presence";
+import VideoBrowser from "./VideoBrowser";
 
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) seconds = 0;
@@ -35,8 +48,24 @@ function formatTime(seconds: number): string {
 export default function Room({ code }: { code: string }) {
   const roomId = useMemo(() => normalizeRoomCode(code), [code]);
   const [userId] = useState(() => getUserId());
-  const [myName, setMyName] = useState(() => getDisplayName());
-  const [myLanguage, setMyLanguage] = useState(() => getLanguagePref());
+  // myName/myLanguage start at the same "nothing cached yet" values the
+  // server renders (it has no localStorage to read), then pick up the real
+  // cached values in an effect below — reading localStorage directly in the
+  // initializer caused a hydration mismatch for any returning visitor (their
+  // name/language differs from the server's blank guess), which momentarily
+  // remounted the whole room on every reload.
+  const [myName, setMyName] = useState("");
+  const [myLanguage, setMyLanguage] = useState("en");
+
+  useEffect(() => {
+    // Must run in an effect, not during render: localStorage is only safe to
+    // read after mount, which is the whole point (see the comment above).
+    /* eslint-disable react-hooks/set-state-in-effect */
+    const cachedName = getDisplayName();
+    if (cachedName) setMyName(cachedName);
+    setMyLanguage(getLanguagePref());
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, []);
 
   const [serverState, setServerState] = useState<RoomState>(INITIAL_ROOM_STATE);
   const [clockOffset, setClockOffset] = useState(0);
@@ -44,7 +73,14 @@ export default function Room({ code }: { code: string }) {
   const [active, setActive] = useState(false);
 
   const [feed, setFeed] = useState<FeedItem[]>([]);
+  // On mobile this drives a Watch/Chat tab switch (see the header's Chat
+  // button + ChatSheet) instead of the old always-peeking sheet — chat is
+  // fully hidden until this is true. Desktop ignores it: chat there is a
+  // permanent sidebar (see ChatSheet's lg: styles), always considered visible
+  // unless fullscreen.
   const [sheetExpanded, setSheetExpanded] = useState(false);
+  const [lastSeenChatCount, setLastSeenChatCount] = useState(0);
+  const isDesktop = useMediaQuery("(min-width: 1024px)");
 
   // Control-bar UI state (driven by the player's progress callback).
   const [displayTime, setDisplayTime] = useState(0);
@@ -54,9 +90,12 @@ export default function Room({ code }: { code: string }) {
 
   const [videoInput, setVideoInput] = useState("");
   const [inputError, setInputError] = useState<string | null>(null);
+  const [pickerMode, setPickerMode] = useState<"search" | "paste">("search");
   const [copied, setCopied] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   const playerRef = useRef<PlayerHandle>(null);
+  const videoContainerRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<PartySocket | null>(null);
   const serverStateRef = useRef(serverState);
   serverStateRef.current = serverState;
@@ -190,6 +229,15 @@ export default function Room({ code }: { code: string }) {
     [send]
   );
 
+  const submitVideo = useCallback(
+    (id: string) => {
+      setInputError(null);
+      setVideoInput("");
+      send({ type: "loadVideo", videoId: id });
+    },
+    [send]
+  );
+
   const handleLoadVideo = (e: React.FormEvent) => {
     e.preventDefault();
     const id = parseYouTubeId(videoInput);
@@ -197,9 +245,7 @@ export default function Room({ code }: { code: string }) {
       setInputError("That doesn't look like a YouTube link.");
       return;
     }
-    setInputError(null);
-    setVideoInput("");
-    send({ type: "loadVideo", videoId: id });
+    submitVideo(id);
   };
 
   const handleJoinPlayback = () => {
@@ -207,6 +253,52 @@ export default function Room({ code }: { code: string }) {
     // Prime playback inside the user gesture so autoplay is allowed afterwards.
     if (serverStateRef.current.isPlaying) playerRef.current?.play();
   };
+
+  // Fullscreen can also be exited via Escape or the browser's own UI, not
+  // just our button, so track the real state via the browser's own event
+  // rather than just flipping a boolean on click.
+  useEffect(() => {
+    const handler = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", handler);
+    return () => document.removeEventListener("fullscreenchange", handler);
+  }, []);
+
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      videoContainerRef.current?.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen().catch(() => {});
+    }
+  }, []);
+
+  // Chat is "visible" (so new messages count as seen, no badge needed) when:
+  // desktop's permanent sidebar is showing (not fullscreen), or mobile's
+  // Chat tab is selected — never while fullscreen, since that hides
+  // everything outside the video container.
+  const chatMessageCount = feed.filter((item) => item.kind === "chat").length;
+  const chatIsVisible = !isFullscreen && (isDesktop || sheetExpanded);
+  // Catch lastSeenChatCount up to the current total whenever chat is visible
+  // (both the moment it becomes visible, and continuously while it stays
+  // visible and new messages arrive) — adjusting state during render like
+  // this, rather than in an effect, avoids an extra cascading render.
+  if (chatIsVisible && lastSeenChatCount !== chatMessageCount) {
+    setLastSeenChatCount(chatMessageCount);
+  }
+  const unreadChatCount = chatIsVisible ? 0 : Math.max(0, chatMessageCount - lastSeenChatCount);
+
+  // A brief on-video toast for new messages while fullscreen, since there's
+  // no tab or sidebar visible at all to badge in that state.
+  const [fullscreenToast, setFullscreenToast] = useState<{ id: string; name: string; text: string } | null>(null);
+  const lastToastedIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isFullscreen) return;
+    const lastChat = [...feed].reverse().find((item) => item.kind === "chat");
+    if (!lastChat || lastChat.id === lastToastedIdRef.current) return;
+    lastToastedIdRef.current = lastChat.id;
+    setFullscreenToast({ id: lastChat.id, name: lastChat.name, text: lastChat.text });
+    const timeout = setTimeout(() => setFullscreenToast(null), 4000);
+    return () => clearTimeout(timeout);
+  }, [feed, isFullscreen]);
 
   const handleNameSubmit = (name: string) => {
     setMyName(name);
@@ -263,108 +355,159 @@ export default function Room({ code }: { code: string }) {
 
   return (
     <>
-      {/* `fixed`-positioned overlays (NamePrompt, ChatSheet) must live outside
-          this div: its entrance animation leaves a lingering `transform`
-          (animation-fill-mode "both"), and any transformed ancestor becomes
-          the containing block for `position: fixed` descendants — nesting
-          them in here would position them relative to this div, not the
-          viewport. */}
-      <div className={`flex min-h-full flex-col animate-room-enter ${sheetExpanded ? "" : "pb-[32vh]"}`}>
-        {/* Header: room code + presence + connection status */}
-        <header className="flex items-center justify-between gap-3 px-4 py-4">
-          <div className="flex items-center gap-2">
-            <span className="rounded-2xl border border-white/6 bg-surface px-3 py-1.5 font-mono text-base tracking-[0.2em] text-text">
-              {roomId}
-            </span>
-            {isHost && (
-              <span className="rounded-full bg-surface-2 px-2.5 py-1 text-xs font-medium text-text-dim">
-                Host
+      {/* `fixed`-positioned overlays (NamePrompt) must live outside the
+          animated column below: its entrance animation leaves a lingering
+          `transform` (animation-fill-mode "both"), and any transformed
+          ancestor becomes the containing block for `position: fixed`
+          descendants — nesting them in here would position them relative to
+          this div, not the viewport. ChatSheet is fixed on mobile too, for
+          the same reason, but on desktop (lg:) it switches to a normal flex
+          sidebar sitting beside this column, YouTube-Live-chat style. */}
+      <div className="flex flex-1 flex-col lg:h-[85vh] lg:flex-row lg:gap-4 lg:py-4">
+        <div
+          className={`flex min-h-full flex-col animate-room-enter lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:rounded-2xl lg:border lg:border-white/6`}
+        >
+          {/* Header: room code + presence + connection status */}
+          <header className="flex items-center justify-between gap-3 border-b border-white/6 px-4 py-4">
+            <div className="flex items-center gap-2">
+              <span className="rounded-2xl border border-white/6 bg-surface px-3 py-1.5 font-mono text-base tracking-[0.2em] text-text">
+                {roomId}
               </span>
-            )}
-          </div>
-          <div className="flex items-center gap-3">
-            <Presence participants={serverState.participants} synced={synced} />
-            <button
-              onClick={voice.toggleMic}
-              aria-label={voice.myMicOn === null ? "Turn on mic" : voice.myMicOn ? "Mute mic" : "Unmute mic"}
-              title={voice.myMicOn === null ? "Turn on mic" : voice.myMicOn ? "Mute mic" : "Unmute mic"}
-              className={`flex h-11 w-11 items-center justify-center rounded-full transition duration-150 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
-                voice.myMicOn ? "bg-accent text-white" : "bg-surface-2 text-text-dim"
-              }`}
-            >
-              {voice.myMicOn ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
-            </button>
-            <button
-              onClick={copyLink}
-              aria-label={copied ? "Copied" : "Copy link"}
-              title={copied ? "Copied" : "Copy link"}
-              className="flex h-11 w-11 items-center justify-center rounded-full bg-surface-2 text-text transition duration-150 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-            >
-              {copied ? <Check className="h-4 w-4" /> : <Share2 className="h-4 w-4" />}
-            </button>
-          </div>
-        </header>
+              {isHost && (
+                <span className="rounded-full bg-surface-2 px-2.5 py-1 text-xs font-medium text-text-dim">
+                  Host
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-3">
+              <Presence participants={serverState.participants} synced={synced} />
+              <button
+                onClick={voice.toggleMic}
+                aria-label={voice.myMicOn === null ? "Turn on mic" : voice.myMicOn ? "Mute mic" : "Unmute mic"}
+                title={voice.myMicOn === null ? "Turn on mic" : voice.myMicOn ? "Mute mic" : "Unmute mic"}
+                className={`flex h-11 w-11 items-center justify-center rounded-full transition duration-150 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+                  voice.myMicOn ? "bg-accent text-white" : "bg-surface-2 text-text-dim"
+                }`}
+              >
+                {voice.myMicOn ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
+              </button>
+              <button
+                onClick={copyLink}
+                aria-label={copied ? "Copied" : "Copy link"}
+                title={copied ? "Copied" : "Copy link"}
+                className="flex h-11 w-11 items-center justify-center rounded-full bg-surface-2 text-text transition duration-150 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              >
+                {copied ? <Check className="h-4 w-4" /> : <Share2 className="h-4 w-4" />}
+              </button>
+              {/* Watch/Chat tab switch — mobile only. Desktop always shows
+                  chat in its permanent sidebar, so this control is pointless
+                  there. */}
+              <button
+                onClick={() => setSheetExpanded((prev) => !prev)}
+                aria-label={sheetExpanded ? "Back to video" : "Open chat"}
+                title={sheetExpanded ? "Back to video" : "Open chat"}
+                className={`relative flex h-11 w-11 items-center justify-center rounded-full transition duration-150 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent lg:hidden ${
+                  sheetExpanded ? "bg-accent text-white" : "bg-surface-2 text-text"
+                }`}
+              >
+                <MessageCircle className="h-4 w-4" />
+                {unreadChatCount > 0 && (
+                  <span className="absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full bg-accent ring-2 ring-bg" />
+                )}
+              </button>
+            </div>
+          </header>
 
-        {connected === false && (
-          <div className="mx-4 mb-2 flex items-center gap-2 rounded-2xl border border-white/6 bg-surface px-4 py-3 text-sm text-text-dim">
-            <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-            Lost connection — reconnecting…
-          </div>
-        )}
-
-        {voice.micError && (
-          <div className="mx-4 mb-2 rounded-2xl border border-white/6 bg-surface px-4 py-3 text-sm text-text-dim">
-            {voice.micError}
-          </div>
-        )}
-
-        {/* Video: always full-bleed, nothing sits beside it. Shrinks to a pinned
-            mini-bar while the chat sheet is expanded (it keeps playing). */}
-        <div className={`relative w-full bg-bg ${sheetExpanded ? "h-20" : "aspect-video"}`}>
-          {hasVideo ? (
-            <YouTubePlayer
-              ref={playerRef}
-              target={serverState}
-              clockOffset={clockOffset}
-              active={active}
-              onProgress={handleProgress}
-            />
-          ) : (
-            <div className="absolute inset-0 flex items-center justify-center px-6 text-center">
-              <p className="max-w-[240px] text-[15px] leading-relaxed text-text-dim">
-                {isHost
-                  ? "Paste a YouTube link to start the show."
-                  : "Waiting for the host to press play."}
-              </p>
+          {connected === false && (
+            <div className="mx-4 mb-2 flex items-center gap-2 rounded-2xl border border-white/6 bg-surface px-4 py-3 text-sm text-text-dim">
+              <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+              Lost connection — reconnecting…
             </div>
           )}
 
-          {/* Tap-to-join gate (unlocks mobile autoplay with one gesture). */}
-          {hasVideo && !active && (
-            <button
-              onClick={handleJoinPlayback}
-              className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-bg/70 backdrop-blur-sm focus-visible:outline-none"
-            >
-              <span className="flex h-16 w-16 items-center justify-center rounded-full bg-accent text-white">
-                <Play className="h-7 w-7 translate-x-0.5" fill="currentColor" strokeWidth={0} />
-              </span>
-              <span className="text-sm font-medium text-text">Tap to join playback</span>
-            </button>
+          {voice.micError && (
+            <div className="mx-4 mb-2 rounded-2xl border border-white/6 bg-surface px-4 py-3 text-sm text-text-dim">
+              {voice.micError}
+            </div>
           )}
 
-          {/* Transparent tap layer: keeps all control in our hands (blocks YouTube's
-              own gestures) and lets a tap toggle play/pause. */}
-          {hasVideo && active && (
-            <button
-              aria-label="Toggle play/pause"
-              onClick={togglePlayPause}
-              className="absolute inset-0 z-10 cursor-pointer"
-            />
-          )}
-        </div>
+          {/* Video: full-bleed on mobile. Shrinks to a pinned mini-bar while
+              the (mobile-only) chat sheet is expanded — on desktop (lg:) it
+              always stays full-size since chat is a sidebar, not an overlay.
+              Fullscreen (via our own button, not YouTube's — see
+              YouTubePlayer's fs:0) overrides both, since this exact div is
+              what gets handed to the Fullscreen API. */}
+          <div
+            ref={videoContainerRef}
+            className={`relative w-full bg-bg ${isFullscreen ? "h-screen" : sheetExpanded ? "h-20 lg:aspect-video" : "aspect-video"}`}
+          >
+            {hasVideo ? (
+              <YouTubePlayer
+                ref={playerRef}
+                target={serverState}
+                clockOffset={clockOffset}
+                active={active}
+                onProgress={handleProgress}
+              />
+            ) : (
+              <div className="absolute inset-0 flex items-center justify-center px-6 text-center">
+                <p className="max-w-[240px] text-[15px] leading-relaxed text-text-dim">
+                  {isHost
+                    ? "Search for a video to start the show."
+                    : "Waiting for the host to press play."}
+                </p>
+              </div>
+            )}
 
-        {!sheetExpanded && (
-          <>
+            {/* Tap-to-join gate (unlocks mobile autoplay with one gesture). */}
+            {hasVideo && !active && (
+              <button
+                onClick={handleJoinPlayback}
+                className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-bg/70 backdrop-blur-sm focus-visible:outline-none"
+              >
+                <span className="flex h-16 w-16 items-center justify-center rounded-full bg-accent text-white">
+                  <Play className="h-7 w-7 translate-x-0.5" fill="currentColor" strokeWidth={0} />
+                </span>
+                <span className="text-sm font-medium text-text">Tap to join playback</span>
+              </button>
+            )}
+
+            {/* Transparent tap layer: keeps all control in our hands (blocks YouTube's
+                own gestures) and lets a tap toggle play/pause. */}
+            {hasVideo && active && (
+              <button
+                aria-label="Toggle play/pause"
+                onClick={togglePlayPause}
+                className="absolute inset-0 z-10 cursor-pointer"
+              />
+            )}
+
+            {hasVideo && (
+              <button
+                onClick={toggleFullscreen}
+                aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+                title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+                className="absolute bottom-3 right-3 z-20 flex h-9 w-9 items-center justify-center rounded-full bg-bg/60 text-text backdrop-blur-sm transition duration-150 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              >
+                {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+              </button>
+            )}
+
+            {/* Fullscreen hides everything outside this container, including
+                the chat sidebar/tab — this is the only way to still surface
+                "a message just came in" while fullscreen. */}
+            {fullscreenToast && (
+              <div className="absolute right-3 top-3 z-30 max-w-[70%] rounded-2xl border border-white/6 bg-surface/90 px-3.5 py-2.5 backdrop-blur-sm">
+                <p className="text-xs font-medium text-text-dim">{fullscreenToast.name}</p>
+                <p className="line-clamp-2 text-sm text-text">{fullscreenToast.text}</p>
+              </div>
+            )}
+          </div>
+
+          {/* Control bar + picker: hidden on mobile while the chat sheet is
+              expanded (it covers this area), but always shown on desktop
+              (lg:) since chat is a sidebar there, never covering the video. */}
+          <div className={`${sheetExpanded ? "hidden" : "flex"} flex-col lg:flex`}>
             {/* Control bar */}
             <div className="flex items-center gap-3 border-t border-white/6 px-4 py-3">
               <button
@@ -405,46 +548,68 @@ export default function Room({ code }: { code: string }) {
               </span>
             </div>
 
-            {/* Host-only video picker */}
+            {/* Host-only video picker: browse trending videos or search is
+                primary (YouTube's search quota is small, so this isn't
+                debounced/live — see VideoBrowser), with paste-a-link as a
+                fallback toggle. */}
             {isHost && (
-              <form
-                onSubmit={handleLoadVideo}
-                className="flex flex-col gap-2 border-t border-white/6 bg-surface px-4 py-4"
-              >
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    inputMode="url"
-                    value={videoInput}
-                    onChange={(e) => setVideoInput(e.target.value)}
-                    placeholder="Paste a YouTube link"
-                    className="min-w-0 flex-1 rounded-2xl border border-white/6 bg-surface-2 px-4 py-3 text-sm text-text placeholder:text-text-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                  />
-                  <button
-                    type="submit"
-                    className="shrink-0 rounded-2xl bg-surface-2 px-4 py-3 text-sm font-semibold text-text transition duration-150 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                  >
-                    Load video
-                  </button>
-                </div>
-                {inputError && <p className="text-xs text-text-dim">{inputError}</p>}
-              </form>
+              <div className="flex flex-col gap-2 border-t border-white/6 bg-surface px-4 py-4">
+                {pickerMode === "search" ? (
+                  <>
+                    <VideoBrowser onSelect={submitVideo} />
+                    <button
+                      type="button"
+                      onClick={() => setPickerMode("paste")}
+                      className="self-start text-xs text-text-dim underline-offset-2 hover:underline"
+                    >
+                      Or paste a link instead
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <form onSubmit={handleLoadVideo} className="flex gap-2">
+                      <input
+                        type="text"
+                        inputMode="url"
+                        value={videoInput}
+                        onChange={(e) => setVideoInput(e.target.value)}
+                        placeholder="Paste a YouTube link"
+                        className="min-w-0 flex-1 rounded-2xl border border-white/6 bg-surface-2 px-4 py-3 text-sm text-text placeholder:text-text-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                      />
+                      <button
+                        type="submit"
+                        className="shrink-0 rounded-2xl bg-surface-2 px-4 py-3 text-sm font-semibold text-text transition duration-150 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                      >
+                        Load video
+                      </button>
+                    </form>
+                    {inputError && <p className="text-xs text-text-dim">{inputError}</p>}
+                    <button
+                      type="button"
+                      onClick={() => setPickerMode("search")}
+                      className="self-start text-xs text-text-dim underline-offset-2 hover:underline"
+                    >
+                      Or search instead
+                    </button>
+                  </>
+                )}
+              </div>
             )}
-          </>
-        )}
+          </div>
+        </div>
+
+        <ChatSheet
+          feed={feed}
+          myUserId={userId}
+          myLanguage={myLanguage}
+          onLanguageChange={handleLanguageChange}
+          expanded={sheetExpanded}
+          onExpandedChange={setSheetExpanded}
+          onSend={handleSendChat}
+        />
       </div>
 
       {!myName && <NamePrompt onSubmit={handleNameSubmit} />}
-
-      <ChatSheet
-        feed={feed}
-        myUserId={userId}
-        myLanguage={myLanguage}
-        onLanguageChange={handleLanguageChange}
-        expanded={sheetExpanded}
-        onExpandedChange={setSheetExpanded}
-        onSend={handleSendChat}
-      />
 
       {Array.from(voice.remoteStreams.entries()).map(([id, stream]) => (
         <audio

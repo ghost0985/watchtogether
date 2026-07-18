@@ -26,6 +26,20 @@ export function normalizeRoomCode(code: string): string {
 const USER_ID_KEY = "wt-user-id";
 
 /**
+ * `crypto.randomUUID()` only works in "secure contexts" (HTTPS, or literally
+ * "localhost") — it throws on a plain http:// LAN IP, which is exactly how a
+ * phone reaches a dev machine for local testing. `crypto.getRandomValues`
+ * has no such restriction, so build an equivalent v4 UUID from that instead.
+ */
+function randomId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/**
  * Stable per-browser id used to identify the host across reconnects. Persisted
  * in localStorage. Returns "" during SSR (no window).
  */
@@ -33,7 +47,7 @@ export function getUserId(): string {
   if (typeof window === "undefined") return "";
   let id = localStorage.getItem(USER_ID_KEY);
   if (!id) {
-    id = crypto.randomUUID();
+    id = randomId();
     localStorage.setItem(USER_ID_KEY, id);
   }
   return id;

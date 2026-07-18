@@ -36,7 +36,13 @@ export default function RootLayout({
       className={`${inter.variable} ${jetbrainsMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-bg font-sans text-text">
-        {children}
+        {/* Phone layout is untouched (this cap is wider than any phone
+            viewport already is) — this only changes things on a laptop/
+            desktop screen, where the app now uses real webpage-width space
+            instead of floating as a narrow phone-shaped column. */}
+        <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col">
+          {children}
+        </div>
       </body>
     </html>
   );

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Send } from "lucide-react";
+import { ChevronDown, Send } from "lucide-react";
 import type { FeedItem } from "@/lib/types";
 import LanguagePicker from "./LanguagePicker";
 
@@ -15,11 +15,6 @@ type Props = {
   onSend: (text: string) => void;
 };
 
-// Sheet peeks at ~30% by default and drags up to ~86% (leaving room for the
-// pinned mini video bar + header up top). See CLAUDE.md's design system.
-const PEEK_VH = 0.32;
-const FULL_VH = 0.82;
-
 export default function ChatSheet({
   feed,
   myUserId,
@@ -30,10 +25,7 @@ export default function ChatSheet({
   onSend,
 }: Props) {
   const [text, setText] = useState("");
-  const [dragHeight, setDragHeight] = useState<number | null>(null);
   const [showOriginalIds, setShowOriginalIds] = useState<Set<string>>(new Set());
-  const dragRef = useRef<{ startY: number; startHeight: number; moved: boolean } | null>(null);
-  const justDraggedRef = useRef(false);
   const listRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to the newest message.
@@ -41,45 +33,6 @@ export default function ChatSheet({
     const el = listRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [feed.length]);
-
-  const bounds = () => ({
-    min: window.innerHeight * PEEK_VH,
-    max: window.innerHeight * FULL_VH,
-  });
-
-  const handlePointerDown = (e: React.PointerEvent) => {
-    (e.target as Element).setPointerCapture(e.pointerId);
-    const { min, max } = bounds();
-    dragRef.current = { startY: e.clientY, startHeight: expanded ? max : min, moved: false };
-  };
-
-  const handlePointerMove = (e: React.PointerEvent) => {
-    const drag = dragRef.current;
-    if (!drag) return;
-    const delta = drag.startY - e.clientY; // dragging up = taller
-    if (Math.abs(delta) > 4) drag.moved = true;
-    const { min, max } = bounds();
-    setDragHeight(Math.min(max, Math.max(min, drag.startHeight + delta)));
-  };
-
-  const handlePointerUp = () => {
-    const drag = dragRef.current;
-    if (drag?.moved && dragHeight !== null) {
-      const { min, max } = bounds();
-      onExpandedChange(dragHeight > (min + max) / 2);
-      justDraggedRef.current = true;
-    }
-    dragRef.current = null;
-    setDragHeight(null);
-  };
-
-  const handleHandleClick = () => {
-    if (justDraggedRef.current) {
-      justDraggedRef.current = false;
-      return;
-    }
-    onExpandedChange(!expanded);
-  };
 
   const toggleShowOriginal = (id: string) => {
     setShowOriginalIds((prev) => {
@@ -98,25 +51,23 @@ export default function ChatSheet({
     setText("");
   };
 
-  const isDragging = dragHeight !== null;
-
   return (
     <div
-      className={`fixed inset-x-0 bottom-0 z-30 flex flex-col rounded-t-2xl border-t border-white/6 bg-surface ${
-        isDragging ? "" : `transition-[height] duration-300 ease-out ${expanded ? "h-[82vh]" : "h-[32vh]"}`
-      }`}
-      style={isDragging ? { height: dragHeight } : undefined}
+      className={`fixed inset-x-0 bottom-0 z-30 mx-auto flex max-w-md flex-col overflow-hidden rounded-t-2xl border-t border-white/6 bg-surface transition-[height] duration-300 ease-out lg:static lg:inset-auto lg:z-auto lg:h-full lg:w-96 lg:max-w-none lg:shrink-0 lg:overflow-visible lg:rounded-2xl lg:border ${
+        expanded ? "h-[82vh]" : "h-0"
+      } lg:!h-full`}
     >
-      <div className="relative flex h-8 w-full shrink-0 items-center justify-center">
+      <div className="relative flex h-11 w-full shrink-0 items-center justify-center border-b border-white/6 px-4 lg:justify-start">
+        <span className="text-sm font-semibold text-text">Chat</span>
+        {/* Mobile-only: tap to go back to the video (Watch tab). Desktop's
+            sidebar has no such toggle — it's always showing. */}
         <button
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-          onClick={handleHandleClick}
-          aria-label={expanded ? "Collapse chat" : "Expand chat"}
-          className="flex h-8 w-full touch-none select-none items-center justify-center"
+          onClick={() => onExpandedChange(false)}
+          aria-label="Back to video"
+          title="Back to video"
+          className="absolute left-3 flex h-8 w-8 items-center justify-center rounded-full text-text-dim lg:hidden"
         >
-          <span className="h-1 w-10 rounded-full bg-white/15" />
+          <ChevronDown className="h-4 w-4" />
         </button>
         <div className="absolute right-3">
           <LanguagePicker value={myLanguage} onChange={onLanguageChange} />
@@ -175,7 +126,6 @@ export default function ChatSheet({
           onChange={(e) => setText(e.target.value)}
           placeholder="Message"
           maxLength={500}
-          onFocus={() => !expanded && onExpandedChange(true)}
           className="min-w-0 flex-1 rounded-full border border-white/6 bg-surface-2 px-4 py-2.5 text-[15px] text-text placeholder:text-text-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
         />
         <button
