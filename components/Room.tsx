@@ -14,6 +14,7 @@ import {
   Pause,
   Play,
   Share2,
+  X,
 } from "lucide-react";
 import {
   PARTYKIT_HOST,
@@ -30,7 +31,7 @@ import { useMediaQuery } from "@/lib/useMediaQuery";
 import { useVoice } from "@/lib/useVoice";
 import YouTubePlayer, { type PlayerHandle } from "./YouTubePlayer";
 import NamePrompt from "./NamePrompt";
-import ChatSheet from "./ChatSheet";
+import ChatSheet, { ChatComposer, ChatMessageList } from "./ChatSheet";
 import Presence from "./Presence";
 import VideoBrowser from "./VideoBrowser";
 
@@ -271,12 +272,12 @@ export default function Room({ code }: { code: string }) {
     }
   }, []);
 
-  // Chat is "visible" (so new messages count as seen, no badge needed) when:
-  // desktop's permanent sidebar is showing (not fullscreen), or mobile's
-  // Chat tab is selected — never while fullscreen, since that hides
-  // everything outside the video container.
+  // Chat is "visible" (so new messages count as seen, no badge/toast needed)
+  // when: desktop's permanent sidebar is showing (not fullscreen), mobile's
+  // Chat tab is selected, or the fullscreen chat overlay is open.
+  const [fullscreenChatOpen, setFullscreenChatOpen] = useState(false);
   const chatMessageCount = feed.filter((item) => item.kind === "chat").length;
-  const chatIsVisible = !isFullscreen && (isDesktop || sheetExpanded);
+  const chatIsVisible = fullscreenChatOpen || (!isFullscreen && (isDesktop || sheetExpanded));
   // Catch lastSeenChatCount up to the current total whenever chat is visible
   // (both the moment it becomes visible, and continuously while it stays
   // visible and new messages arrive) — adjusting state during render like
@@ -286,19 +287,27 @@ export default function Room({ code }: { code: string }) {
   }
   const unreadChatCount = chatIsVisible ? 0 : Math.max(0, chatMessageCount - lastSeenChatCount);
 
-  // A brief on-video toast for new messages while fullscreen, since there's
-  // no tab or sidebar visible at all to badge in that state.
+  // Exiting fullscreen closes the overlay too, so it doesn't linger open
+  // (unexpectedly) if they go fullscreen again later. Adjusting state during
+  // render like this, rather than in an effect, avoids an extra cascading
+  // render (same reasoning as the lastSeenChatCount adjustment above).
+  if (!isFullscreen && fullscreenChatOpen) {
+    setFullscreenChatOpen(false);
+  }
+
+  // A brief on-video toast for new messages while fullscreen and the chat
+  // overlay isn't already open (no need to announce what's already visible).
   const [fullscreenToast, setFullscreenToast] = useState<{ id: string; name: string; text: string } | null>(null);
   const lastToastedIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!isFullscreen) return;
+    if (!isFullscreen || fullscreenChatOpen) return;
     const lastChat = [...feed].reverse().find((item) => item.kind === "chat");
     if (!lastChat || lastChat.id === lastToastedIdRef.current) return;
     lastToastedIdRef.current = lastChat.id;
     setFullscreenToast({ id: lastChat.id, name: lastChat.name, text: lastChat.text });
     const timeout = setTimeout(() => setFullscreenToast(null), 4000);
     return () => clearTimeout(timeout);
-  }, [feed, isFullscreen]);
+  }, [feed, isFullscreen, fullscreenChatOpen]);
 
   const handleNameSubmit = (name: string) => {
     setMyName(name);
@@ -362,11 +371,17 @@ export default function Room({ code }: { code: string }) {
           descendants — nesting them in here would position them relative to
           this div, not the viewport. ChatSheet is fixed on mobile too, for
           the same reason, but on desktop (lg:) it switches to a normal flex
-          sidebar sitting beside this column, YouTube-Live-chat style. */}
-      <div className="flex flex-1 flex-col lg:h-[85vh] lg:flex-row lg:gap-4 lg:py-4">
-        <div
-          className={`flex min-h-full flex-col animate-room-enter lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:rounded-2xl lg:border lg:border-white/6`}
-        >
+          sidebar sitting beside this column, YouTube-Live-chat style.
+
+          Deliberately NOT height-constrained with its own inner scroll on
+          desktop: an earlier version boxed this into a fixed-height row with
+          a separate scrolling region, which made the category rows below
+          the fold feel broken/missing (scrolling the page didn't reveal
+          them — you had to find the *inner* scrollbar). A real webpage just
+          scrolls the whole page; only the chat sidebar stays pinned (via
+          `sticky` in ChatSheet) while that happens. */}
+      <div className="flex flex-1 flex-col lg:flex-row lg:items-start lg:gap-4 lg:py-4">
+        <div className="flex min-h-full flex-1 flex-col animate-room-enter lg:rounded-2xl lg:border lg:border-white/6">
           {/* Header: room code + presence + connection status */}
           <header className="flex items-center justify-between gap-3 border-b border-white/6 px-4 py-4">
             <div className="flex items-center gap-2">
@@ -466,7 +481,7 @@ export default function Room({ code }: { code: string }) {
                 className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-bg/70 backdrop-blur-sm focus-visible:outline-none"
               >
                 <span className="flex h-16 w-16 items-center justify-center rounded-full bg-accent text-white">
-                  <Play className="h-7 w-7 translate-x-0.5" fill="currentColor" strokeWidth={0} />
+                  <Play className="h-7 w-7" fill="currentColor" strokeWidth={0} />
                 </span>
                 <span className="text-sm font-medium text-text">Tap to join playback</span>
               </button>
@@ -494,12 +509,49 @@ export default function Room({ code }: { code: string }) {
             )}
 
             {/* Fullscreen hides everything outside this container, including
-                the chat sidebar/tab — this is the only way to still surface
-                "a message just came in" while fullscreen. */}
+                the chat sidebar/tab — this button and the overlay below are
+                the only way to reach chat while fullscreen. Hidden once the
+                overlay is open: on a narrow viewport the overlay is nearly
+                full-width and would sit on top of this button anyway (the X
+                in the overlay's own header closes it instead). */}
+            {isFullscreen && !fullscreenChatOpen && (
+              <button
+                onClick={() => setFullscreenChatOpen(true)}
+                aria-label="Open fullscreen chat"
+                title="Open fullscreen chat"
+                className="absolute bottom-3 right-14 z-20 flex h-9 w-9 items-center justify-center rounded-full bg-bg/60 text-text backdrop-blur-sm transition duration-150 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              >
+                <MessageCircle className="h-4 w-4" />
+                {unreadChatCount > 0 && (
+                  <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-accent ring-1 ring-bg" />
+                )}
+              </button>
+            )}
+
+            {/* Brief on-video toast for a new message while fullscreen and
+                the chat overlay isn't already open. */}
             {fullscreenToast && (
               <div className="absolute right-3 top-3 z-30 max-w-[70%] rounded-2xl border border-white/6 bg-surface/90 px-3.5 py-2.5 backdrop-blur-sm">
                 <p className="text-xs font-medium text-text-dim">{fullscreenToast.name}</p>
                 <p className="line-clamp-2 text-sm text-text">{fullscreenToast.text}</p>
+              </div>
+            )}
+
+            {/* The actual fullscreen chat overlay, opened via the button above. */}
+            {isFullscreen && fullscreenChatOpen && (
+              <div className="absolute inset-y-0 right-0 z-40 flex w-full max-w-sm flex-col border-l border-white/6 bg-surface/95 backdrop-blur-sm">
+                <div className="flex h-11 shrink-0 items-center justify-between border-b border-white/6 px-4">
+                  <span className="text-sm font-semibold text-text">Chat</span>
+                  <button
+                    onClick={() => setFullscreenChatOpen(false)}
+                    aria-label="Close fullscreen chat"
+                    className="text-text-dim"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <ChatMessageList feed={feed} myUserId={userId} myLanguage={myLanguage} />
+                <ChatComposer onSend={handleSendChat} />
               </div>
             )}
           </div>
@@ -519,7 +571,7 @@ export default function Room({ code }: { code: string }) {
                 {serverState.isPlaying ? (
                   <Pause className="h-5 w-5" fill="currentColor" strokeWidth={0} />
                 ) : (
-                  <Play className="h-5 w-5 translate-x-0.5" fill="currentColor" strokeWidth={0} />
+                  <Play className="h-5 w-5" fill="currentColor" strokeWidth={0} />
                 )}
               </button>
 

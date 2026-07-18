@@ -9,11 +9,23 @@ type Props = {
   onSelect: (videoId: string) => void;
 };
 
-function VideoCard({ video, onSelect }: { video: VideoResult; onSelect: (videoId: string) => void }) {
+function VideoCard({
+  video,
+  onSelect,
+  fixedWidth,
+}: {
+  video: VideoResult;
+  onSelect: (videoId: string) => void;
+  /** Rows scroll horizontally (needs a fixed card width); the search grid
+   * wraps instead, so its cards should fill their grid cell. */
+  fixedWidth: boolean;
+}) {
   return (
     <button
       onClick={() => onSelect(video.videoId)}
-      className="flex w-40 shrink-0 flex-col gap-2 rounded-2xl border border-white/6 bg-surface-2 p-2 text-left transition duration-150 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent sm:w-full"
+      className={`flex shrink-0 flex-col gap-2 rounded-2xl border border-white/6 bg-surface-2 p-2 text-left transition duration-150 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+        fixedWidth ? "w-40" : "w-full"
+      }`}
     >
       {video.thumbnailUrl ? (
         // Plain <img>, not next/image: one-off external thumbnails from
@@ -36,7 +48,7 @@ function VideoGrid({ videos, onSelect }: { videos: VideoResult[]; onSelect: (vid
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {videos.map((video) => (
-        <VideoCard key={video.videoId} video={video} onSelect={onSelect} />
+        <VideoCard key={video.videoId} video={video} onSelect={onSelect} fixedWidth={false} />
       ))}
     </div>
   );
@@ -67,9 +79,9 @@ function VideoRow({
           <Loader2 className="h-4 w-4 animate-spin text-text-dim" />
         </div>
       ) : (
-        <div className="flex gap-3 overflow-x-auto pb-1 sm:grid sm:grid-cols-2 sm:overflow-visible lg:grid-cols-4">
+        <div className="flex gap-3 overflow-x-auto pb-1">
           {videos.map((video) => (
-            <VideoCard key={video.videoId} video={video} onSelect={onSelect} />
+            <VideoCard key={video.videoId} video={video} onSelect={onSelect} fixedWidth />
           ))}
         </div>
       )}
@@ -250,9 +262,7 @@ export default function VideoBrowser({ onSelect }: Props) {
               Couldn’t find anything for that — try different words, or paste a link instead.
             </p>
           ) : (
-            <div className="max-h-[60vh] overflow-y-auto">
-              <VideoGrid videos={searchResults} onSelect={onSelect} />
-            </div>
+            <VideoGrid videos={searchResults} onSelect={onSelect} />
           )}
         </>
       ) : (
@@ -267,7 +277,7 @@ export default function VideoBrowser({ onSelect }: Props) {
             </button>
           </div>
 
-          <div className="flex max-h-[65vh] flex-col gap-5 overflow-y-auto">
+          <div className="flex flex-col gap-5">
             {signedIn && (
               <VideoRow
                 label="Subscriptions"
