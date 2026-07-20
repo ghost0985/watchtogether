@@ -53,9 +53,24 @@ export function getUserId(): string {
   return id;
 }
 
-/** PartyKit host. Defaults to the local dev server; override for production. */
-export const PARTYKIT_HOST =
-  process.env.NEXT_PUBLIC_PARTYKIT_HOST ?? "127.0.0.1:1999";
+/**
+ * PartyKit host. In production, set NEXT_PUBLIC_PARTYKIT_HOST to the deployed
+ * PartyKit domain (a real, separate server — can't be guessed from the URL).
+ *
+ * For local dev, deliberately NOT read from NEXT_PUBLIC_PARTYKIT_HOST: that
+ * would have to be hardcoded to a specific LAN IP, which silently goes stale
+ * the moment the machine's network address changes (different WiFi, DHCP
+ * renewal, a phone hotspot vs. home WiFi, etc.) — exactly what caused a
+ * permanently-stuck "Lost connection" once already. Instead, reuse whatever
+ * host got the browser to this page at all (localhost, a LAN IP, whatever) —
+ * the PartyKit dev server runs on the same machine, just port 1999, so it's
+ * always reachable the same way the Next.js page itself was.
+ */
+export function getPartykitHost(): string {
+  if (process.env.NEXT_PUBLIC_PARTYKIT_HOST) return process.env.NEXT_PUBLIC_PARTYKIT_HOST;
+  if (typeof window !== "undefined") return `${window.location.hostname}:1999`;
+  return "127.0.0.1:1999";
+}
 
 const DISPLAY_NAME_KEY = "wt-display-name";
 

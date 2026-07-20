@@ -17,9 +17,9 @@ import {
   X,
 } from "lucide-react";
 import {
-  PARTYKIT_HOST,
   getDisplayName,
   getLanguagePref,
+  getPartykitHost,
   getUserId,
   normalizeRoomCode,
   setDisplayName,
@@ -113,7 +113,7 @@ export default function Room({ code }: { code: string }) {
   const cacheKey = `wt-state-${roomId}`;
 
   const socket = usePartySocket({
-    host: PARTYKIT_HOST,
+    host: getPartykitHost(),
     room: roomId,
     query: { userId },
     onOpen: () => {

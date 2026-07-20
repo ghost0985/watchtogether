@@ -8,7 +8,11 @@ const nextConfig: NextConfig = {
   },
   // Lets a phone on the same WiFi load the dev server via its LAN IP — without
   // this, Next.js blocks cross-origin dev requests (HMR, etc.) by default.
-  allowedDevOrigins: ["172.20.10.10"],
+  // Wildcarded to the whole home-network range instead of one exact IP, so
+  // it doesn't need updating every time the machine's address changes (a
+  // DHCP renewal, switching WiFi, etc. — same problem PARTYKIT_HOST used to
+  // have, see lib/room.ts's getPartykitHost()).
+  allowedDevOrigins: ["192.168.1.*"],
 };
 
 export default nextConfig;
