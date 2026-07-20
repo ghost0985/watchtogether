@@ -9,82 +9,34 @@ type Props = {
   onSelect: (videoId: string) => void;
 };
 
-function VideoCard({
-  video,
-  onSelect,
-  fixedWidth,
-}: {
-  video: VideoResult;
-  onSelect: (videoId: string) => void;
-  /** Rows scroll horizontally (needs a fixed card width); the search grid
-   * wraps instead, so its cards should fill their grid cell. */
-  fixedWidth: boolean;
-}) {
+function VideoCard({ video, onSelect }: { video: VideoResult; onSelect: (videoId: string) => void }) {
   return (
     <button
       onClick={() => onSelect(video.videoId)}
-      className={`flex shrink-0 flex-col gap-2 rounded-2xl border border-white/6 bg-surface-2 p-2 text-left transition duration-150 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
-        fixedWidth ? "w-40" : "w-full"
-      }`}
+      className="flex w-full flex-col gap-2 rounded-xl text-left transition duration-150 ease-out active:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
     >
       {video.thumbnailUrl ? (
         // Plain <img>, not next/image: one-off external thumbnails from
         // YouTube's CDN, not worth a remotePatterns config entry.
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={video.thumbnailUrl} alt="" className="aspect-video w-full rounded-lg object-cover" />
+        <img src={video.thumbnailUrl} alt="" className="aspect-video w-full rounded-xl object-cover" />
       ) : (
-        <div className="aspect-video w-full rounded-lg bg-surface" />
+        <div className="aspect-video w-full rounded-xl bg-surface" />
       )}
-      <div className="min-w-0 px-1 pb-1">
-        <p className="line-clamp-2 text-sm text-text">{video.title}</p>
+      <div className="min-w-0">
+        <p className="truncate text-sm text-text">{video.title}</p>
         <p className="truncate text-xs text-text-dim">{video.channelTitle}</p>
       </div>
     </button>
   );
 }
 
-/** Full-width wrapping grid — used for search results, where filling the space matters more than a compact row. */
 function VideoGrid({ videos, onSelect }: { videos: VideoResult[]; onSelect: (videoId: string) => void }) {
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
       {videos.map((video) => (
-        <VideoCard key={video.videoId} video={video} onSelect={onSelect} fixedWidth={false} />
+        <VideoCard key={video.videoId} video={video} onSelect={onSelect} />
       ))}
-    </div>
-  );
-}
-
-/** Horizontally-scrolling row — used for the browse rows (Subscriptions/Trending/categories), YouTube-homepage style. */
-function VideoRow({
-  label,
-  videos,
-  status,
-  errorText,
-  onSelect,
-}: {
-  label: string;
-  videos: VideoResult[];
-  status: "loading" | "idle" | "error";
-  errorText: string;
-  onSelect: (videoId: string) => void;
-}) {
-  if (status === "idle" && videos.length === 0) return null;
-  return (
-    <div className="flex flex-col gap-2">
-      <p className="text-xs text-text-dim">{label}</p>
-      {status === "error" ? (
-        <p className="text-xs text-text-dim">{errorText}</p>
-      ) : status === "loading" ? (
-        <div className="flex h-24 items-center">
-          <Loader2 className="h-4 w-4 animate-spin text-text-dim" />
-        </div>
-      ) : (
-        <div className="flex gap-3 overflow-x-auto pb-1">
-          {videos.map((video) => (
-            <VideoCard key={video.videoId} video={video} onSelect={onSelect} fixedWidth />
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -92,13 +44,60 @@ function VideoRow({
 type RowState = { videos: VideoResult[]; status: "loading" | "idle" | "error" };
 const ROW_LOADING: RowState = { videos: [], status: "loading" };
 
+/** One tab's worth of content: a loading spinner, an error message, or the grid. */
+function CategorySection({
+  state,
+  errorText,
+  onSelect,
+}: {
+  state: RowState;
+  errorText: string;
+  onSelect: (videoId: string) => void;
+}) {
+  if (state.status === "error") {
+    return <p className="text-xs text-text-dim">{errorText}</p>;
+  }
+  if (state.status === "loading") {
+    return (
+      <div className="flex h-24 items-center justify-center">
+        <Loader2 className="h-4 w-4 animate-spin text-text-dim" />
+      </div>
+    );
+  }
+  return <VideoGrid videos={state.videos} onSelect={onSelect} />;
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`shrink-0 rounded-full px-4 py-2 text-xs font-medium transition duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+        active ? "bg-accent text-white" : "bg-surface-2 text-text-dim active:opacity-70"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
 /**
  * Search is explicit-submit only (no search-as-you-type): the YouTube Data
  * API's free quota is small (~100 searches/day total), so every keystroke
  * hitting the API would burn through it in minutes. A per-session cache
  * avoids re-spending quota on a query someone already ran. Everything else
  * here (trending, per-category trending, subscriptions) uses cheap 1-unit
- * calls, so it's fetched freely and shown as rows, YouTube-homepage style.
+ * calls, so it's fetched freely, organized into tabs so only one section's
+ * videos show at a time instead of every category stacked on the page at
+ * once.
  */
 export default function VideoBrowser({ onSelect }: Props) {
   const [query, setQuery] = useState("");
@@ -113,6 +112,8 @@ export default function VideoBrowser({ onSelect }: Props) {
 
   const [signedIn, setSignedIn] = useState(false);
   const [subscriptions, setSubscriptions] = useState<RowState>(ROW_LOADING);
+
+  const [activeTab, setActiveTab] = useState<string>("trending");
 
   useEffect(() => {
     let cancelled = false;
@@ -179,6 +180,11 @@ export default function VideoBrowser({ onSelect }: Props) {
     await fetch("/api/auth/google/signout", { method: "POST" }).catch(() => {});
     setSignedIn(false);
     setSubscriptions(ROW_LOADING);
+    // The Subscriptions tab disappears once signed out -- if it was active,
+    // switch away so we don't leave the picker on a tab that no longer
+    // exists (it would otherwise sit on a permanent loading spinner, since
+    // subscriptions never re-fetch after sign-out).
+    setActiveTab((prev) => (prev === "subscriptions" ? "trending" : prev));
   };
 
   const runSearch = async (e: React.FormEvent) => {
@@ -277,34 +283,47 @@ export default function VideoBrowser({ onSelect }: Props) {
             </button>
           </div>
 
-          <div className="flex flex-col gap-5">
+          <div className="flex gap-2 overflow-x-auto pb-1">
             {signedIn && (
-              <VideoRow
-                label="Subscriptions"
-                videos={subscriptions.videos}
-                status={subscriptions.status}
-                errorText="Couldn’t load your subscriptions — try trending or search instead."
-                onSelect={onSelect}
-              />
+              <TabButton active={activeTab === "subscriptions"} onClick={() => setActiveTab("subscriptions")}>
+                Subscriptions
+              </TabButton>
             )}
-            <VideoRow
-              label="Trending now"
-              videos={trending.videos}
-              status={trending.status}
+            <TabButton active={activeTab === "trending"} onClick={() => setActiveTab("trending")}>
+              Trending now
+            </TabButton>
+            {VIDEO_CATEGORIES.map((category) => (
+              <TabButton key={category.id} active={activeTab === category.id} onClick={() => setActiveTab(category.id)}>
+                {category.label}
+              </TabButton>
+            ))}
+          </div>
+
+          {activeTab === "subscriptions" && (
+            <CategorySection
+              state={subscriptions}
+              errorText="Couldn’t load your subscriptions — try trending or search instead."
+              onSelect={onSelect}
+            />
+          )}
+          {activeTab === "trending" && (
+            <CategorySection
+              state={trending}
               errorText="Couldn’t load trending videos right now — try searching instead."
               onSelect={onSelect}
             />
-            {VIDEO_CATEGORIES.map((category) => (
-              <VideoRow
-                key={category.id}
-                label={category.label}
-                videos={categoryRows[category.id]?.videos ?? []}
-                status={categoryRows[category.id]?.status ?? "loading"}
-                errorText={`Couldn’t load ${category.label} videos right now.`}
-                onSelect={onSelect}
-              />
-            ))}
-          </div>
+          )}
+          {VIDEO_CATEGORIES.map(
+            (category) =>
+              activeTab === category.id && (
+                <CategorySection
+                  key={category.id}
+                  state={categoryRows[category.id] ?? ROW_LOADING}
+                  errorText={`Couldn’t load ${category.label} videos right now.`}
+                  onSelect={onSelect}
+                />
+              )
+          )}
         </>
       )}
     </div>
