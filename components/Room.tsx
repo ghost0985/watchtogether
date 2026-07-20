@@ -11,10 +11,8 @@ import {
   Mic,
   MicOff,
   Minimize2,
-  Pause,
   Play,
   Share2,
-  X,
 } from "lucide-react";
 import {
   getDisplayName,
@@ -29,22 +27,15 @@ import { parseYouTubeId } from "@/lib/youtube";
 import { INITIAL_ROOM_STATE, type ClientMessage, type FeedItem, type RoomState, type RtcSignal, type ServerMessage } from "@/lib/types";
 import { useMediaQuery } from "@/lib/useMediaQuery";
 import { useVoice } from "@/lib/useVoice";
-import YouTubePlayer, { type PlayerHandle } from "./YouTubePlayer";
+import YouTubePlayer, { type PlayerHandle, type UserAction } from "./YouTubePlayer";
 import NamePrompt from "./NamePrompt";
 import ChatSheet, { ChatComposer, ChatMessageList } from "./ChatSheet";
 import Presence from "./Presence";
 import VideoBrowser from "./VideoBrowser";
 
-function formatTime(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds < 0) seconds = 0;
-  const total = Math.floor(seconds);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  const mm = h > 0 ? String(m).padStart(2, "0") : String(m);
-  const ss = String(s).padStart(2, "0");
-  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
-}
+// How long the fullscreen chat overlay stays visible after activity before
+// fading out, mirroring a real player's auto-hiding controls.
+const CHAT_FADE_MS = 3000;
 
 export default function Room({ code }: { code: string }) {
   const roomId = useMemo(() => normalizeRoomCode(code), [code]);
@@ -82,12 +73,6 @@ export default function Room({ code }: { code: string }) {
   const [sheetExpanded, setSheetExpanded] = useState(false);
   const [lastSeenChatCount, setLastSeenChatCount] = useState(0);
   const isDesktop = useMediaQuery("(min-width: 1024px)");
-
-  // Control-bar UI state (driven by the player's progress callback).
-  const [displayTime, setDisplayTime] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [dragging, setDragging] = useState(false);
-  const [dragValue, setDragValue] = useState(0);
 
   const [videoInput, setVideoInput] = useState("");
   const [inputError, setInputError] = useState<string | null>(null);
@@ -192,7 +177,6 @@ export default function Room({ code }: { code: string }) {
 
   const isHost = serverState.hostId != null && serverState.hostId === userId;
   const hasVideo = serverState.videoId != null;
-  const sliderValue = dragging ? dragValue : displayTime;
 
   const namedParticipants = serverState.participants.filter((p) => p.name);
   const synced =
@@ -200,32 +184,12 @@ export default function Room({ code }: { code: string }) {
     namedParticipants.every((p) => p.connected) &&
     serverState.isPlaying;
 
-  const handleProgress = useCallback(
-    (currentTime: number, dur: number, _isPlaying: boolean) => {
-      if (dur && Number.isFinite(dur)) setDuration(dur);
-      setDisplayTime((prev) => (dragging ? prev : currentTime));
-    },
-    [dragging]
-  );
-
-  const togglePlayPause = useCallback(() => {
-    const player = playerRef.current;
-    if (!player || !serverStateRef.current.videoId) return;
-    const position = player.getCurrentTime();
-    if (serverStateRef.current.isPlaying) {
-      player.pause();
-      send({ type: "pause", positionSeconds: position });
-    } else {
-      player.play();
-      send({ type: "play", positionSeconds: position });
-    }
-  }, [send]);
-
-  const commitSeek = useCallback(
-    (value: number) => {
-      playerRef.current?.seekTo(value);
-      send({ type: "seek", positionSeconds: value });
-      setDragging(false);
+  // The viewer used YouTube's own native controls (play, pause, or scrubbed
+  // the seek bar) — see YouTubePlayer's checkForUserAction for how this is
+  // detected without an echo loop back from our own server-driven reconcile.
+  const handleUserAction = useCallback(
+    (action: UserAction) => {
+      send({ type: action.type, positionSeconds: action.positionSeconds });
     },
     [send]
   );
@@ -272,30 +236,6 @@ export default function Room({ code }: { code: string }) {
     }
   }, []);
 
-  // Fullscreen-only auto-hiding controls (play/pause, seek, chat, exit): show
-  // on entry/interaction, fade out after a few seconds idle — same pattern as
-  // real video players, so the video itself isn't permanently covered.
-  const [controlsVisible, setControlsVisible] = useState(true);
-  const hideControlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const revealControls = useCallback(() => {
-    setControlsVisible(true);
-    if (hideControlsTimeoutRef.current) clearTimeout(hideControlsTimeoutRef.current);
-    hideControlsTimeoutRef.current = setTimeout(() => setControlsVisible(false), 3000);
-  }, []);
-
-  useEffect(() => {
-    if (isFullscreen) {
-      // Entering fullscreen is exactly the kind of external event this
-      // effect exists to synchronize with (see the fullscreenchange
-      // listener above), same reasoning as the myName/myLanguage effect.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      revealControls();
-    } else if (hideControlsTimeoutRef.current) {
-      clearTimeout(hideControlsTimeoutRef.current);
-      hideControlsTimeoutRef.current = null;
-    }
-  }, [isFullscreen, revealControls]);
-
   // Chat is "visible" (so new messages count as seen, no badge/toast needed)
   // when: desktop's permanent sidebar is showing (not fullscreen), mobile's
   // Chat tab is selected, or the fullscreen chat overlay is open.
@@ -319,6 +259,45 @@ export default function Room({ code }: { code: string }) {
     setFullscreenChatOpen(false);
   }
 
+  // Our own leftover fullscreen UI (the chat-toggle/exit-fullscreen corner
+  // buttons, and the chat panel when open) fully disappears after a few
+  // seconds of no activity WHILE THE VIDEO IS PLAYING, and comes back the
+  // moment either side pauses -- pausing is the one video-state signal we
+  // actually have (via the synced `serverState.isPlaying`), unlike a bare
+  // "tap the video" gesture, which happens inside YouTube's cross-origin
+  // iframe and can never reach our code at all (confirmed: iframe content
+  // is a separate document, its clicks don't bubble to the parent page).
+  // So "reappear on pause" is the real, reliable equivalent of "tap to see
+  // the controls" here. While paused, it just stays visible indefinitely
+  // (no countdown) -- resuming playback restarts the fade-out clock.
+  const [chatFadeVisible, setChatFadeVisible] = useState(true);
+  const chatFadeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const revealChatOverlay = useCallback(() => {
+    setChatFadeVisible(true);
+    if (chatFadeTimeoutRef.current) clearTimeout(chatFadeTimeoutRef.current);
+    chatFadeTimeoutRef.current = setTimeout(() => setChatFadeVisible(false), CHAT_FADE_MS);
+  }, []);
+  useEffect(() => {
+    if (!isFullscreen) return;
+    // Synchronizing with external state/timers (playback state, setTimeout),
+    // not deriving state from props -- entering fullscreen, pausing,
+    // resuming, opening the panel, or a new message arriving are all
+    // external events that should affect the fade-out clock.
+    if (!serverState.isPlaying) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setChatFadeVisible(true);
+      if (chatFadeTimeoutRef.current) clearTimeout(chatFadeTimeoutRef.current);
+      return;
+    }
+    revealChatOverlay();
+    return () => {
+      if (chatFadeTimeoutRef.current) clearTimeout(chatFadeTimeoutRef.current);
+    };
+    // chatMessageCount is intentionally included: a new message while the
+    // panel is open should reset the fade timer too, same as any other
+    // activity.
+  }, [isFullscreen, serverState.isPlaying, fullscreenChatOpen, chatMessageCount, revealChatOverlay]);
+
   // A brief on-video toast for new messages while fullscreen and the chat
   // overlay isn't already open (no need to announce what's already visible).
   const [fullscreenToast, setFullscreenToast] = useState<{ id: string; name: string; text: string } | null>(null);
@@ -329,9 +308,17 @@ export default function Room({ code }: { code: string }) {
     if (!lastChat || lastChat.id === lastToastedIdRef.current) return;
     lastToastedIdRef.current = lastChat.id;
     setFullscreenToast({ id: lastChat.id, name: lastChat.name, text: lastChat.text });
+  }, [feed, isFullscreen, fullscreenChatOpen]);
+  // Auto-hide the toast on its own timer, independent of the effect above --
+  // that one re-runs on every `feed` change, including unrelated system
+  // notices (someone reconnecting, a mic toggle), and if its cleanup ran
+  // without also scheduling a fresh timeout, the toast would get "stuck"
+  // permanently visible the moment any such notice arrived mid-countdown.
+  useEffect(() => {
+    if (!fullscreenToast) return;
     const timeout = setTimeout(() => setFullscreenToast(null), 4000);
     return () => clearTimeout(timeout);
-  }, [feed, isFullscreen, fullscreenChatOpen]);
+  }, [fullscreenToast]);
 
   const handleNameSubmit = (name: string) => {
     setMyName(name);
@@ -475,7 +462,13 @@ export default function Room({ code }: { code: string }) {
               always stays full-size since chat is a sidebar, not an overlay.
               Fullscreen (via our own button, not YouTube's — see
               YouTubePlayer's fs:0) overrides both, since this exact div is
-              what gets handed to the Fullscreen API. */}
+              what gets handed to the Fullscreen API.
+
+              Play/pause/seek use YouTube's own native controls (no custom
+              overlay competing with them for space) — see YouTubePlayer's
+              checkForUserAction for how those still stay in sync across
+              both people's screens despite not going through our own button
+              handlers anymore. */}
           <div
             ref={videoContainerRef}
             className={`relative w-full bg-bg ${isFullscreen ? "h-screen" : sheetExpanded ? "h-20 lg:aspect-video" : "aspect-video"}`}
@@ -486,7 +479,7 @@ export default function Room({ code }: { code: string }) {
                 target={serverState}
                 clockOffset={clockOffset}
                 active={active}
-                onProgress={handleProgress}
+                onUserAction={handleUserAction}
               />
             ) : (
               <div className="absolute inset-0 flex items-center justify-center px-6 text-center">
@@ -511,144 +504,106 @@ export default function Room({ code }: { code: string }) {
               </button>
             )}
 
-            {/* Transparent tap layer: keeps all control in our hands (blocks YouTube's
-                own gestures). Normally a tap toggles play/pause directly; in
-                fullscreen a tap instead just reveals the auto-hiding controls
-                below (a real play/pause button lives there) — so checking
-                how much time is left never accidentally pauses the video. */}
-            {hasVideo && active && (
-              <button
-                aria-label={isFullscreen ? "Show controls" : "Toggle play/pause"}
-                onClick={isFullscreen ? revealControls : togglePlayPause}
-                className="absolute inset-0 z-10 cursor-pointer"
-              />
-            )}
-
-            {/* Enter fullscreen. Once inside, the unified controls bar below
-                has its own "Exit fullscreen" button instead. */}
+            {/* Our own fullscreen toggle: fs:0 disables YouTube's native one
+                on purpose (their fullscreen would target the bare iframe, not
+                our container, breaking the chat overlay below). Small and
+                always visible — YouTube's own controls already have their
+                own auto-hide behavior, so this doesn't need to match it. */}
             {hasVideo && !isFullscreen && (
               <button
                 onClick={toggleFullscreen}
                 aria-label="Fullscreen"
                 title="Fullscreen"
-                className="absolute bottom-3 right-3 z-20 flex h-11 w-11 items-center justify-center rounded-full bg-bg/60 text-text backdrop-blur-sm transition duration-150 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                className="absolute right-3 top-3 z-20 flex h-11 w-11 items-center justify-center rounded-full bg-bg/60 text-text backdrop-blur-sm transition duration-150 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               >
                 <Maximize2 className="h-4 w-4" />
               </button>
             )}
 
             {/* Brief on-video toast for a new message while fullscreen and
-                the chat overlay isn't already open. Independent of the
-                auto-hiding controls below — it's a notification, not a control. */}
+                the chat overlay isn't already open. Left side, so it never
+                overlaps the fullscreen/chat buttons on the right. */}
             {fullscreenToast && (
-              <div className="absolute right-3 top-3 z-30 max-w-[70%] rounded-2xl border border-white/6 bg-surface/90 px-3.5 py-2.5 backdrop-blur-sm">
+              <div className="absolute left-3 top-3 z-30 max-w-[70%] rounded-2xl border border-white/6 bg-surface/90 px-3.5 py-2.5 backdrop-blur-sm">
                 <p className="text-xs font-medium text-text-dim">{fullscreenToast.name}</p>
                 <p className="line-clamp-2 text-sm text-text">{fullscreenToast.text}</p>
               </div>
             )}
 
-            {/* Fullscreen-only controls: play/pause, seek, chat, exit — all
-                fade out together after a few seconds idle, and back in on
-                any tap/interaction. Everything outside this container is
-                hidden by the browser during real fullscreen, so this is also
-                the only way to reach chat while fullscreen. */}
+            {/* Fullscreen hides everything outside this container, including
+                the chat sidebar/tab — these two buttons are the only way to
+                reach chat or exit fullscreen while fullscreen. */}
             {isFullscreen && (
-              <div
-                className={`absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/80 via-black/40 to-transparent px-3 pb-3 pt-10 transition-opacity duration-300 ${
-                  controlsVisible ? "opacity-100" : "pointer-events-none opacity-0"
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => {
-                      togglePlayPause();
-                      revealControls();
-                    }}
-                    disabled={!hasVideo}
-                    aria-label={serverState.isPlaying ? "Pause" : "Play"}
-                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-accent text-white transition duration-150 ease-out active:scale-95 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                  >
-                    {serverState.isPlaying ? (
-                      <Pause className="h-5 w-5" fill="currentColor" strokeWidth={0} />
-                    ) : (
-                      <Play className="h-5 w-5" fill="currentColor" strokeWidth={0} />
-                    )}
-                  </button>
+              <>
+                <button
+                  // No onPointerDown reveal here on purpose -- this button's
+                  // own onClick already decides reveal-vs-open-vs-close by
+                  // reading chatFadeVisible, and pointerdown fires before
+                  // click. Flipping chatFadeVisible to true on pointerdown
+                  // would make the click handler think it's already fully
+                  // visible and close it instead of revealing it.
+                  onClick={() => {
+                    if (!fullscreenChatOpen) {
+                      setFullscreenChatOpen(true);
+                    } else if (!chatFadeVisible) {
+                      // Overlay is open but faded out -- bring it back
+                      // instead of closing it, same as tapping a real
+                      // player's controls back into view.
+                      revealChatOverlay();
+                    } else {
+                      setFullscreenChatOpen(false);
+                    }
+                  }}
+                  aria-label={fullscreenChatOpen ? "Close fullscreen chat" : "Open fullscreen chat"}
+                  title={fullscreenChatOpen ? "Close fullscreen chat" : "Open fullscreen chat"}
+                  className={`absolute right-16 top-3 z-50 flex h-11 w-11 items-center justify-center rounded-full backdrop-blur-sm transition-[opacity,background-color] duration-200 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+                    fullscreenChatOpen ? "bg-accent text-white" : "bg-bg/60 text-text"
+                  } ${chatFadeVisible ? "opacity-100" : "pointer-events-none opacity-0"}`}
+                >
+                  <MessageCircle className="h-4 w-4" />
+                  {unreadChatCount > 0 && !fullscreenChatOpen && (
+                    <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-accent ring-1 ring-bg" />
+                  )}
+                </button>
 
-                  <span className="w-10 shrink-0 text-right font-mono text-xs text-white/80">
-                    {formatTime(sliderValue)}
-                  </span>
-
-                  <input
-                    type="range"
-                    min={0}
-                    max={duration || 0}
-                    step={0.5}
-                    value={Math.min(sliderValue, duration || 0)}
-                    disabled={!hasVideo || !duration}
-                    onChange={(e) => {
-                      setDragging(true);
-                      setDragValue(Number(e.target.value));
-                      revealControls();
-                    }}
-                    onPointerUp={() => dragging && commitSeek(dragValue)}
-                    onKeyUp={() => dragging && commitSeek(dragValue)}
-                    className="h-1.5 w-full min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-white/20 accent-accent disabled:opacity-40"
-                  />
-
-                  <span className="w-10 shrink-0 font-mono text-xs text-white/80">{formatTime(duration)}</span>
-
-                  <button
-                    onClick={() => {
-                      setFullscreenChatOpen((prev) => !prev);
-                      revealControls();
-                    }}
-                    aria-label={fullscreenChatOpen ? "Close fullscreen chat" : "Open fullscreen chat"}
-                    title={fullscreenChatOpen ? "Close fullscreen chat" : "Open fullscreen chat"}
-                    className={`relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition duration-150 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
-                      fullscreenChatOpen ? "bg-accent text-white" : "bg-white/10 text-white"
-                    }`}
-                  >
-                    <MessageCircle className="h-4 w-4" />
-                    {unreadChatCount > 0 && !fullscreenChatOpen && (
-                      <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-accent ring-1 ring-bg" />
-                    )}
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      toggleFullscreen();
-                    }}
-                    aria-label="Exit fullscreen"
-                    title="Exit fullscreen"
-                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/10 text-white transition duration-150 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                  >
-                    <Minimize2 className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
+                <button
+                  onPointerDown={revealChatOverlay}
+                  onClick={toggleFullscreen}
+                  aria-label="Exit fullscreen"
+                  title="Exit fullscreen"
+                  className={`absolute right-3 top-3 z-50 flex h-11 w-11 items-center justify-center rounded-full bg-bg/60 text-text backdrop-blur-sm transition-opacity duration-200 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+                    chatFadeVisible ? "opacity-100" : "pointer-events-none opacity-0"
+                  }`}
+                >
+                  <Minimize2 className="h-4 w-4" />
+                </button>
+              </>
             )}
 
             {/* The actual fullscreen chat overlay, opened via the button
-                above. Translucent (not a solid panel) and fades with the
-                controls above so it never permanently sits over the video —
-                tapping the video brings both back without pausing playback. */}
+                above. Translucent (not a solid panel) so it never fully
+                blocks the video. Fades out after CHAT_FADE_MS of no
+                activity (like a real player's controls) and stays
+                logically "open" while faded -- the toggle button reveals
+                it again on tap rather than closing it. pointer-events-none
+                while faded so a tap passes through to the video/YouTube's
+                own controls underneath instead of hitting invisible chat
+                controls. */}
             {isFullscreen && fullscreenChatOpen && (
               <div
-                onClick={revealControls}
-                className={`absolute inset-y-0 right-0 z-40 flex w-full max-w-sm flex-col border-l border-white/6 bg-surface/50 backdrop-blur-md transition-opacity duration-300 ${
-                  controlsVisible ? "opacity-100" : "pointer-events-none opacity-0"
+                onPointerDown={revealChatOverlay}
+                onKeyDown={revealChatOverlay}
+                className={`absolute inset-y-0 right-0 z-40 flex w-full max-w-sm flex-col border-l border-white/6 bg-surface/50 backdrop-blur-md transition-opacity duration-200 ease-out ${
+                  chatFadeVisible ? "opacity-100" : "pointer-events-none opacity-0"
                 }`}
               >
-                <div className="flex h-11 shrink-0 items-center justify-between border-b border-white/6 px-4">
+                {/* No close button here on purpose -- it would sit in the
+                    same top-right corner as the always-on-top chat-toggle
+                    and exit-fullscreen buttons (z-50) and get visually
+                    covered by them. Those two already open/close this
+                    overlay, so this header is just a label. */}
+                <div className="flex h-11 shrink-0 items-center border-b border-white/6 px-4">
                   <span className="text-sm font-semibold text-text">Chat</span>
-                  <button
-                    onClick={() => setFullscreenChatOpen(false)}
-                    aria-label="Close fullscreen chat"
-                    className="text-text-dim"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
                 </div>
                 <ChatMessageList feed={feed} myUserId={userId} myLanguage={myLanguage} />
                 <ChatComposer onSend={handleSendChat} />
@@ -656,50 +611,10 @@ export default function Room({ code }: { code: string }) {
             )}
           </div>
 
-          {/* Control bar + picker: hidden on mobile while the chat sheet is
-              expanded (it covers this area), but always shown on desktop
-              (lg:) since chat is a sidebar there, never covering the video. */}
+          {/* Picker: hidden on mobile while the chat sheet is expanded (it
+              covers this area), but always shown on desktop (lg:) since chat
+              is a sidebar there, never covering the video. */}
           <div className={`${sheetExpanded ? "hidden" : "flex"} flex-col lg:flex`}>
-            {/* Control bar */}
-            <div className="flex items-center gap-3 border-t border-white/6 px-4 py-3">
-              <button
-                onClick={togglePlayPause}
-                disabled={!hasVideo}
-                aria-label={serverState.isPlaying ? "Pause" : "Play"}
-                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-accent text-white transition duration-150 ease-out active:scale-95 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
-              >
-                {serverState.isPlaying ? (
-                  <Pause className="h-5 w-5" fill="currentColor" strokeWidth={0} />
-                ) : (
-                  <Play className="h-5 w-5" fill="currentColor" strokeWidth={0} />
-                )}
-              </button>
-
-              <span className="w-12 shrink-0 text-right font-mono text-xs text-text-dim">
-                {formatTime(sliderValue)}
-              </span>
-
-              <input
-                type="range"
-                min={0}
-                max={duration || 0}
-                step={0.5}
-                value={Math.min(sliderValue, duration || 0)}
-                disabled={!hasVideo || !duration}
-                onChange={(e) => {
-                  setDragging(true);
-                  setDragValue(Number(e.target.value));
-                }}
-                onPointerUp={() => dragging && commitSeek(dragValue)}
-                onKeyUp={() => dragging && commitSeek(dragValue)}
-                className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-surface-2 accent-accent disabled:opacity-40"
-              />
-
-              <span className="w-12 shrink-0 font-mono text-xs text-text-dim">
-                {formatTime(duration)}
-              </span>
-            </div>
-
             {/* Host-only video picker: browse trending videos or search is
                 primary (YouTube's search quota is small, so this isn't
                 debounced/live — see VideoBrowser), with paste-a-link as a
