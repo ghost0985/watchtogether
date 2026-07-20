@@ -522,9 +522,11 @@ export default function Room({ code }: { code: string }) {
 
             {/* Brief on-video toast for a new message while fullscreen and
                 the chat overlay isn't already open. Left side, so it never
-                overlaps the fullscreen/chat buttons on the right. */}
+                overlaps the fullscreen/chat buttons on the right. Dropped
+                down below YouTube's own title bar (see the buttons below for
+                why top-3 doesn't clear it). */}
             {fullscreenToast && (
-              <div className="absolute left-3 top-3 z-30 max-w-[70%] rounded-2xl border border-white/6 bg-surface/90 px-3.5 py-2.5 backdrop-blur-sm">
+              <div className="absolute left-3 top-24 z-30 max-w-[70%] rounded-2xl border border-white/6 bg-surface/90 px-3.5 py-2.5 backdrop-blur-sm">
                 <p className="text-xs font-medium text-text-dim">{fullscreenToast.name}</p>
                 <p className="line-clamp-2 text-sm text-text">{fullscreenToast.text}</p>
               </div>
@@ -532,16 +534,60 @@ export default function Room({ code }: { code: string }) {
 
             {/* Fullscreen hides everything outside this container, including
                 the chat sidebar/tab — these two buttons are the only way to
-                reach chat or exit fullscreen while fullscreen. */}
+                reach chat or exit fullscreen while fullscreen. Sat at top-3
+                originally, but that overlaps YouTube's own title/channel
+                text (which can run two lines and reach ~90px tall) -- pt-24
+                below clears it while keeping the buttons at the same visual
+                spot.
+
+                The hover zone spans the FULL WIDTH (inset-x-0), not just a
+                tight box around the buttons -- moving the mouse anywhere
+                across this band reveals them, closer to "any mouse
+                movement" like the user asked for. It deliberately starts at
+                top-24 (not top-0): YouTube renders its OWN clickable
+                volume/CC/settings icons up around y=10-40 during active
+                playback (confirmed via screenshot) -- covering that region
+                too would silently swallow real taps meant for those icons.
+                top-24 stays below them. It also can't extend any further
+                DOWN without reaching YouTube's bottom control bar (play,
+                seek, volume, CC, settings) and blocking taps meant for that
+                either -- this band is the safe practical ceiling between
+                YouTube's own two rows of real controls.
+
+                Two things still genuinely can't be replicated, for the same
+                reason as before: movement over the video itself (the middle
+                of the screen, a separate origin our code can't see into),
+                and YouTube quietly showing its own controls mid-playback in
+                response to a tap we never see -- only postMessage'd player
+                STATE reaches us (which is exactly what the pause-based
+                reveal already uses), not raw input events.
+
+                onClick={revealChatOverlay} here too (not onPointerDown --
+                that would race with the chat-toggle button's own onClick the
+                same way removing it from that button fixed earlier): when a
+                button underneath is faded (pointer-events-none), this
+                wrapper is the topmost hit-testable thing at that exact spot,
+                so a raw tap/click that lands there (no hover first, e.g. on
+                a touchscreen) needs its own fallback -- otherwise it's a
+                dead zone that does nothing instead of revealing or exiting.
+                Click bubbles from the button to the wrapper AFTER the
+                button's own handler already ran, so this is safe. */}
             {isFullscreen && (
-              <>
+              <div
+                onMouseMove={revealChatOverlay}
+                onClick={revealChatOverlay}
+                className="absolute inset-x-0 top-24 z-50 flex h-16 items-start justify-end gap-3 pr-3"
+              >
                 <button
                   // No onPointerDown reveal here on purpose -- this button's
                   // own onClick already decides reveal-vs-open-vs-close by
                   // reading chatFadeVisible, and pointerdown fires before
                   // click. Flipping chatFadeVisible to true on pointerdown
                   // would make the click handler think it's already fully
-                  // visible and close it instead of revealing it.
+                  // visible and close it instead of revealing it. (Hovering
+                  // via the wrapper above doesn't have this problem: a real
+                  // mouse always hovers the button before clicking it, so
+                  // chatFadeVisible is already true well before the click.)
                   onClick={() => {
                     if (!fullscreenChatOpen) {
                       setFullscreenChatOpen(true);
@@ -556,7 +602,7 @@ export default function Room({ code }: { code: string }) {
                   }}
                   aria-label={fullscreenChatOpen ? "Close fullscreen chat" : "Open fullscreen chat"}
                   title={fullscreenChatOpen ? "Close fullscreen chat" : "Open fullscreen chat"}
-                  className={`absolute right-16 top-3 z-50 flex h-11 w-11 items-center justify-center rounded-full backdrop-blur-sm transition-[opacity,background-color] duration-200 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+                  className={`relative flex h-11 w-11 items-center justify-center rounded-full backdrop-blur-sm transition-[opacity,background-color] duration-200 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
                     fullscreenChatOpen ? "bg-accent text-white" : "bg-bg/60 text-text"
                   } ${chatFadeVisible ? "opacity-100" : "pointer-events-none opacity-0"}`}
                 >
@@ -571,13 +617,13 @@ export default function Room({ code }: { code: string }) {
                   onClick={toggleFullscreen}
                   aria-label="Exit fullscreen"
                   title="Exit fullscreen"
-                  className={`absolute right-3 top-3 z-50 flex h-11 w-11 items-center justify-center rounded-full bg-bg/60 text-text backdrop-blur-sm transition-opacity duration-200 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+                  className={`flex h-11 w-11 items-center justify-center rounded-full bg-bg/60 text-text backdrop-blur-sm transition-opacity duration-200 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
                     chatFadeVisible ? "opacity-100" : "pointer-events-none opacity-0"
                   }`}
                 >
                   <Minimize2 className="h-4 w-4" />
                 </button>
-              </>
+              </div>
             )}
 
             {/* The actual fullscreen chat overlay, opened via the button
@@ -593,6 +639,7 @@ export default function Room({ code }: { code: string }) {
               <div
                 onPointerDown={revealChatOverlay}
                 onKeyDown={revealChatOverlay}
+                onMouseMove={revealChatOverlay}
                 className={`absolute inset-y-0 right-0 z-40 flex w-full max-w-sm flex-col border-l border-white/6 bg-surface/50 backdrop-blur-md transition-opacity duration-200 ease-out ${
                   chatFadeVisible ? "opacity-100" : "pointer-events-none opacity-0"
                 }`}
