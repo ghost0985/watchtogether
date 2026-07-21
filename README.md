@@ -1,36 +1,34 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# WatchTogether
 
-## Getting Started
+A private, two-person watch party for YouTube. Join a room, load a video, and stay perfectly in sync — play, pause, and seek all mirror instantly between both people — with live chat (auto-translated if you speak different languages) and voice chat over WebRTC.
 
-First, run the development server:
+Built as a mobile-first PWA: no install, no account, just a room code.
+
+## Stack
+
+- **Next.js** (App Router) + TypeScript + Tailwind CSS, hosted on Vercel
+- **Cloudflare Workers + Durable Objects** for the real-time room server (authoritative playback state, chat, presence, WebRTC signaling) — deployed under our own Cloudflare account so it isn't dependent on a third-party host's shared capacity
+- **YouTube IFrame Player API** for video playback
+- **Gemini API** for live chat translation
+- **WebRTC** (peer-to-peer, no SFU) for voice chat, signaled through the same Cloudflare room
+
+## Running it locally
+
+Two dev servers, run side by side:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run dev     # Next.js, http://localhost:3000
+npm run party   # the real-time room server (Wrangler), port 1999
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+You'll need a few API keys in `.env.local` (see the comments in that file for where to get each one): `GEMINI_API_KEY`, `YOUTUBE_API_KEY`, and `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` if you want the optional "Sign in with Google" subscriptions feed. The app works without any of them — those features just gracefully show as unavailable instead.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## A note on "Sign in with Google"
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+This is a small personal project, not a published/verified Google app, so signing in shows Google's standard "unverified app" warning (one extra click through "Advanced → Go to WatchTogether (unsafe)"). That's expected, not a bug — going through Google's full verification process is built for apps with real public userbases, which this deliberately isn't. It's made for exactly two people to use together, and the Google sign-in is an optional extra (browsing trending videos and pasting links both work without it).
 
-## Learn More
+## Deploying
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **Frontend**: push to `master`, Vercel auto-deploys.
+- **Real-time server**: `npm run party:deploy` (Wrangler), then make sure `NEXT_PUBLIC_REALTIME_HOST` in Vercel's environment variables points at the deployed Worker's URL.
