@@ -17,7 +17,7 @@ import {
 import {
   getDisplayName,
   getLanguagePref,
-  getPartykitHost,
+  getRealtimeHost,
   getUserId,
   normalizeRoomCode,
   setDisplayName,
@@ -98,7 +98,7 @@ export default function Room({ code }: { code: string }) {
   const cacheKey = `wt-state-${roomId}`;
 
   const socket = usePartySocket({
-    host: getPartykitHost(),
+    host: getRealtimeHost(),
     room: roomId,
     query: { userId },
     onOpen: () => {

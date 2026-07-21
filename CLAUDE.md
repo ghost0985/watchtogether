@@ -9,23 +9,23 @@ Solo dev (Logan), building in Claude Code. Portfolio-quality project: real-time 
 ## Stack (do not deviate without discussion)
 - **Framework:** Next.js (App Router) + TypeScript + Tailwind CSS
 - **Hosting:** Vercel
-- **Real-time sync:** PartyKit (free tier) — WebSocket rooms. Vercel serverless can't hold persistent connections, so all real-time state lives in the PartyKit server, NOT in Next.js API routes.
+- **Real-time sync:** Cloudflare Workers + Durable Objects (own account, free tier) — WebSocket rooms, deployed via `wrangler` (`party/worker.ts`). Vercel serverless can't hold persistent connections, so all real-time state lives in the Worker, NOT in Next.js API routes. (Originally built on PartyKit, a hosted wrapper around this same Cloudflare stack — migrated off it after its shared free-tier hosting zone hit a platform-wide domain-limit outage with no ETA; deploying directly under our own account removes that shared-capacity risk entirely. See `wrangler.jsonc` for the Durable Object binding/migration config.)
 - **Video:** YouTube IFrame Player API (loaded via script tag, controlled with JS)
 - **Chat translation:** Gemini API free tier via plain fetch (same pattern as chat-with-PDF project — REST, no SDK), called from a Next.js API route so the key stays server-side
-- **Voice:** WebRTC peer-to-peer via PeerJS (2 users = simple mesh, no SFU needed). PartyKit doubles as the signaling channel.
-- **No database for v1.** Rooms are ephemeral, state lives in PartyKit room memory. Add persistence later only if needed.
+- **Voice:** WebRTC peer-to-peer via PeerJS (2 users = simple mesh, no SFU needed). The real-time server doubles as the signaling channel.
+- **No database for v1.** Rooms are ephemeral, state lives in the Durable Object's in-memory instance fields. Add persistence later only if needed.
 - **No auth for v1.** Room code IS the access control. Host role = first person in the room (store a host token in localStorage).
 
 ## Architecture overview
 ```
-[Phone A: host]  ⇄  PartyKit room (authoritative state)  ⇄  [Phone B: guest]
+[Phone A: host]  ⇄  Cloudflare Durable Object room (authoritative state)  ⇄  [Phone B: guest]
       │                                                          │
       └── YouTube IFrame player ──── (each device plays its own stream)
-      └── PeerJS voice (P2P audio, signaled through PartyKit)
+      └── PeerJS voice (P2P audio, signaled through the same room)
       └── Chat msg → Next.js API route → Gemini translate → broadcast
 ```
 
-**Sync model:** The PartyKit room holds authoritative state: `{ videoId, isPlaying, positionSeconds, lastUpdateTimestamp, hostId }`. Clients send intents (play/pause/seek/loadVideo); server updates state and broadcasts; clients reconcile their player to server state. On join, new client gets full state snapshot and seeks to `position + (now - lastUpdateTimestamp)` if playing.
+**Sync model:** The Durable Object room holds authoritative state: `{ videoId, isPlaying, positionSeconds, lastUpdateTimestamp, hostId }`. Clients send intents (play/pause/seek/loadVideo); server updates state and broadcasts; clients reconcile their player to server state. On join, new client gets full state snapshot and seeks to `position + (now - lastUpdateTimestamp)` if playing.
 
 **Drift correction:** Every 5s, clients compare local player time to computed server time. If drift > 1.5s, seek to correct. Suppress the echo (a programmatic seek must not rebroadcast as a user seek — use a flag).
 
@@ -93,13 +93,13 @@ The **sync pulse**: a thin accent-colored ring around both users' presence avata
 - Landing page: "Create room" → generates 6-char room code, routes to `/room/[code]`
 - Join by entering code or opening the link directly
 - YouTube URL/ID input (host only) loads video for everyone
-- Play/pause/seek sync via PartyKit
+- Play/pause/seek sync via the real-time server (Cloudflare Worker + Durable Object)
 - Mobile-first layout: video top, controls below, works one-handed portrait
 - **Done when:** two phones stay in sync through play/pause/seek/refresh/rejoin
 
 ### Phase 2 — Chat
 - Chat panel below player (mobile) with name picker on join (no auth)
-- Messages broadcast through the same PartyKit room
+- Messages broadcast through the same room
 - Presence: show who's in the room, join/leave notices
 - **Done when:** chat works while video plays, survives reconnect
 
@@ -110,7 +110,7 @@ The **sync pulse**: a thin accent-colored ring around both users' presence avata
 - **Done when:** she sets Spanish (or whatever), your English messages show translated on her side and vice versa
 
 ### Phase 4 — Voice
-- Mic toggle button. WebRTC audio-only P2P via PeerJS, signaling over PartyKit
+- Mic toggle button. WebRTC audio-only P2P via PeerJS, signaling over the same room
 - Mute state shown in presence UI
 - Test on real phones early — iOS Safari WebRTC has quirks (needs user gesture to start audio, check autoplay policies)
 - **Done when:** voice works phone-to-phone over cellular, not just wifi
@@ -127,13 +127,13 @@ The **sync pulse**: a thin accent-colored ring around both users' presence avata
 - **iOS Safari kills timers/sockets when backgrounded.** Reconnect + full state resync on `visibilitychange` is mandatory.
 - **YouTube IFrame API loads async.** Gate all player calls behind the `onYouTubeIframeAPIReady` callback.
 - **Ads:** ads are per-viewer-session, not per-app. Premium on the viewing device's Google session = no ads. Nothing in code can change this — do not attempt workarounds.
-- **PartyKit rooms are memoryless on cold start.** If the room hibernates, first rejoiner's client should be able to re-seed state (keep last-known state in sessionStorage as fallback).
+- **Durable Object rooms are memoryless on cold start.** If the room evicts, first rejoiner's client should be able to re-seed state (keep last-known state in sessionStorage as fallback).
 
 ## Non-goals for v1
 - No Netflix or other DRM platforms (webview injection = fragile, unauthorized; revisit never)
 - No accounts/auth, no database, no video upload, no >2-person voice, no screen sharing
 
 ## Conventions
-- Components in `components/`, PartyKit server in `party/`, shared types in `lib/types.ts` (import into both client and party server so message shapes never drift)
-- All PartyKit messages are discriminated unions: `{ type: "play" | "pause" | "seek" | "loadVideo" | "chat" | "presence" | ... , ... }`
+- Components in `components/`, real-time server (Cloudflare Worker) in `party/worker.ts`, shared types in `lib/types.ts` (import into both client and worker so message shapes never drift)
+- All real-time messages are discriminated unions: `{ type: "play" | "pause" | "seek" | "loadVideo" | "chat" | "presence" | ... , ... }`
 - Commit at the end of every working session; deploy every phase

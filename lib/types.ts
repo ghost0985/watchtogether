@@ -31,12 +31,24 @@ export type Participant = {
   micOn: boolean | null;
 };
 
-/** An offer/answer/ICE-candidate signal relayed peer-to-peer through PartyKit
- * (no external signaling service — see CLAUDE.md's voice architecture note). */
+/** Same shape as the DOM's `RTCIceCandidateInit`, defined explicitly rather
+ * than referencing that global: this file is shared with the Cloudflare
+ * Worker, a non-DOM runtime where that type doesn't exist. A real
+ * `RTCIceCandidateInit` value is structurally assignable here regardless. */
+export type IceCandidateInit = {
+  candidate?: string;
+  sdpMid?: string | null;
+  sdpMLineIndex?: number | null;
+  usernameFragment?: string | null;
+};
+
+/** An offer/answer/ICE-candidate signal relayed peer-to-peer through the
+ * real-time server (no external signaling service — see CLAUDE.md's voice
+ * architecture note). */
 export type RtcSignal =
   | { kind: "offer"; sdp: string }
   | { kind: "answer"; sdp: string }
-  | { kind: "ice"; candidate: RTCIceCandidateInit };
+  | { kind: "ice"; candidate: IceCandidateInit };
 
 /**
  * A chat bubble or a system notice ("X joined the room"), in one ordered feed.

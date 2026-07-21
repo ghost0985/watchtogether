@@ -17,8 +17,8 @@
 /.next/
 /out/
 
-# partykit
-/.partykit/
+# cloudflare / wrangler
+/.wrangler/
 
 # production
 /build

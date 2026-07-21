@@ -1,9 +1,11 @@
-import type * as Party from "partykit/server";
+import { DurableObject } from "cloudflare:workers";
 import type { ClientMessage, FeedItem, Participant, ServerMessage, RoomState } from "../lib/types";
 import { INITIAL_ROOM_STATE } from "../lib/types";
 import { LANGUAGES } from "../lib/languages";
 
-type ConnState = { userId: string };
+export interface Env {
+  WATCH_ROOM: DurableObjectNamespace<WatchRoom>;
+}
 
 const MAX_FEED_ITEMS = 200;
 const MAX_NAME_LENGTH = 24;
@@ -19,16 +21,22 @@ const VALID_LANGUAGE_CODES = new Set(LANGUAGES.map((l) => l.code));
  * State is intentionally ephemeral — on a cold start it resets, and the first
  * rejoining host re-seeds playback from its sessionStorage cache. Chat history
  * resets on cold start too; there's no database in v1.
+ *
+ * Plain (non-hibernating) WebSocketPair, not the Hibernation API: this app is
+ * two people with near-zero traffic, nowhere near the point where hibernation's
+ * idle-cost savings would matter, and this shape is the closest structural
+ * match to the room-object model this was ported from.
  */
-export default class WatchRoom implements Party.Server {
+export class WatchRoom extends DurableObject<Env> {
   state: RoomState = { ...INITIAL_ROOM_STATE, participants: [] };
   participants = new Map<string, Participant>();
   feed: FeedItem[] = [];
   /** For targeted WebRTC signaling relay (not broadcast). Keyed by userId so a
    * reconnect naturally replaces the stale entry. */
-  connectionsByUserId = new Map<string, Party.Connection>();
-
-  constructor(readonly room: Party.Room) {}
+  connectionsByUserId = new Map<string, WebSocket>();
+  /** Reverse lookup: a socket doesn't carry its own userId, unlike PartyKit's
+   * `Connection.setState()`. */
+  userIdBySocket = new Map<WebSocket, string>();
 
   private snapshot(): string {
     const message: ServerMessage = {
@@ -37,10 +45,6 @@ export default class WatchRoom implements Party.Server {
       serverTime: Date.now(),
     };
     return JSON.stringify(message);
-  }
-
-  private userId(conn: Party.Connection): string {
-    return (conn.state as ConnState | null)?.userId ?? conn.id;
   }
 
   private getOrCreateParticipant(userId: string): Participant {
@@ -52,30 +56,43 @@ export default class WatchRoom implements Party.Server {
     return participant;
   }
 
+  private broadcast(json: string) {
+    for (const ws of this.userIdBySocket.keys()) {
+      try {
+        ws.send(json);
+      } catch {
+        // A dead socket here means its close/error event just hasn't fired
+        // yet -- handleClose will clean it up momentarily.
+      }
+    }
+  }
+
   private pushFeedItem(item: FeedItem) {
     this.feed.push(item);
     if (this.feed.length > MAX_FEED_ITEMS) this.feed = this.feed.slice(-MAX_FEED_ITEMS);
     const message: ServerMessage = { type: "feedItem", item };
-    this.room.broadcast(JSON.stringify(message));
+    this.broadcast(JSON.stringify(message));
   }
 
-  /**
-   * A second `room.broadcast()` call in the same handler tick throws in
-   * PartyKit's local dev runtime (a dev-only quirk). Yielding a tick avoids it —
-   * but the yield must be *awaited* by the caller, not fire-and-forgotten, or
-   * the runtime tears down the handler's execution context before the deferred
-   * broadcast ever runs.
-   */
   private async broadcastState() {
     await Promise.resolve();
-    this.room.broadcast(this.snapshot());
+    this.broadcast(this.snapshot());
   }
 
-  onConnect(conn: Party.Connection, ctx: Party.ConnectionContext) {
-    const userId =
-      new URL(ctx.request.url).searchParams.get("userId") ?? conn.id;
-    conn.setState({ userId } satisfies ConnState);
-    this.connectionsByUserId.set(userId, conn);
+  async fetch(request: Request): Promise<Response> {
+    if (request.headers.get("Upgrade") !== "websocket") {
+      return new Response("Expected a WebSocket upgrade request", { status: 426 });
+    }
+
+    const url = new URL(request.url);
+    const userId = url.searchParams.get("userId") ?? crypto.randomUUID();
+
+    const pair = new WebSocketPair();
+    const [client, server] = Object.values(pair);
+    server.accept();
+
+    this.userIdBySocket.set(server, userId);
+    this.connectionsByUserId.set(userId, server);
 
     // First person into the room becomes host (persists across their reconnects
     // because the id is stable in their localStorage).
@@ -88,15 +105,30 @@ export default class WatchRoom implements Party.Server {
     // to keep video sync going before the name prompt is answered.
     this.getOrCreateParticipant(userId);
 
-    conn.send(this.snapshot());
-    conn.send(JSON.stringify({ type: "feedHistory", items: this.feed } satisfies ServerMessage));
+    server.send(this.snapshot());
+    server.send(JSON.stringify({ type: "feedHistory", items: this.feed } satisfies ServerMessage));
+
+    server.addEventListener("message", (event) => {
+      void this.handleMessage(server, event.data);
+    });
+    server.addEventListener("close", () => {
+      void this.handleClose(server);
+    });
+    server.addEventListener("error", () => {
+      void this.handleClose(server);
+    });
+
+    return new Response(null, { status: 101, webSocket: client });
   }
 
-  async onClose(conn: Party.Connection) {
-    const userId = this.userId(conn);
+  private async handleClose(ws: WebSocket) {
+    const userId = this.userIdBySocket.get(ws);
+    this.userIdBySocket.delete(ws);
+    if (!userId) return;
+
     // Only clear the registry entry if a later reconnect hasn't already
-    // replaced it (avoids a stale onClose deleting a fresh connection).
-    if (this.connectionsByUserId.get(userId) === conn) {
+    // replaced it (avoids a stale close handler deleting a fresh connection).
+    if (this.connectionsByUserId.get(userId) === ws) {
       this.connectionsByUserId.delete(userId);
     }
 
@@ -116,7 +148,7 @@ export default class WatchRoom implements Party.Server {
     await this.broadcastState();
   }
 
-  async onMessage(raw: string | ArrayBuffer | ArrayBufferView, sender: Party.Connection) {
+  private async handleMessage(sender: WebSocket, raw: string | ArrayBuffer) {
     if (typeof raw !== "string") return;
 
     let message: ClientMessage;
@@ -127,7 +159,8 @@ export default class WatchRoom implements Party.Server {
     }
 
     const now = Date.now();
-    const senderId = this.userId(sender);
+    const senderId = this.userIdBySocket.get(sender);
+    if (!senderId) return;
 
     switch (message.type) {
       case "loadVideo": {
@@ -227,4 +260,23 @@ export default class WatchRoom implements Party.Server {
   }
 }
 
-WatchRoom satisfies Party.Worker;
+/**
+ * Top-level Worker: routes to a Durable Object per room. Matches the exact
+ * URL shape the `partysocket` client library builds by default
+ * (`/parties/main/:room`) so the frontend needs zero changes.
+ */
+const worker = {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const url = new URL(request.url);
+    const match = url.pathname.match(/^\/parties\/main\/([^/]+)$/);
+    if (!match) {
+      return new Response("Not found", { status: 404 });
+    }
+    const roomId = match[1];
+    const id = env.WATCH_ROOM.idFromName(roomId);
+    const stub = env.WATCH_ROOM.get(id);
+    return stub.fetch(request);
+  },
+};
+
+export default worker;

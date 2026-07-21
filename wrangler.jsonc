@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "watchtogether",
+  "main": "party/worker.ts",
+  "compatibility_date": "2026-07-20",
+  "durable_objects": {
+    "bindings": [{ "name": "WATCH_ROOM", "class_name": "WatchRoom" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["WatchRoom"] }],
+  // Same port PartyKit's dev server used, and bound to all interfaces (not
+  // just localhost, which is Wrangler's default) -- lib/room.ts's
+  // getRealtimeHost() auto-detects "<page's own hostname>:1999" for local/LAN
+  // dev, so a phone on the same WiFi can reach this the same way it reaches
+  // the Next.js dev server.
+  "dev": {
+    "ip": "0.0.0.0",
+    "port": 1999
+  }
+}
