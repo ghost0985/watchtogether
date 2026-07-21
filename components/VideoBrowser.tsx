@@ -112,8 +112,23 @@ export default function VideoBrowser({ onSelect }: Props) {
 
   const [signedIn, setSignedIn] = useState(false);
   const [subscriptions, setSubscriptions] = useState<RowState>(ROW_LOADING);
+  const [googleAuthError, setGoogleAuthError] = useState(false);
 
   const [activeTab, setActiveTab] = useState<string>("trending");
+
+  // /api/auth/google redirects back with this flag instead of crashing when
+  // sign-in isn't configured (missing GOOGLE_CLIENT_ID/SECRET) -- surface it
+  // once, then strip it so it doesn't linger across refreshes/back-nav.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("googleAuthError") !== "1") return;
+    // Reading window.location is a genuine external-system sync (only safe
+    // post-mount), not state derivable during render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setGoogleAuthError(true);
+    url.searchParams.delete("googleAuthError");
+    window.history.replaceState(null, "", url.toString());
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -273,7 +288,7 @@ export default function VideoBrowser({ onSelect }: Props) {
         </>
       ) : (
         <>
-          <div className="flex justify-end">
+          <div className="flex flex-col items-end gap-1">
             <button
               type="button"
               onClick={signedIn ? signOut : signIn}
@@ -281,6 +296,9 @@ export default function VideoBrowser({ onSelect }: Props) {
             >
               {signedIn ? "Sign out" : "Sign in with Google"}
             </button>
+            {googleAuthError && (
+              <p className="text-xs text-text-dim">Google sign-in isn’t set up here yet — try trending or search instead.</p>
+            )}
           </div>
 
           <div className="flex gap-2 overflow-x-auto pb-1">

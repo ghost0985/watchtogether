@@ -19,6 +19,12 @@ function requireEnv(name: string): string {
   return value;
 }
 
+/** Whether sign-in can actually be attempted right now (both OAuth secrets
+ * configured) — check this before calling buildAuthUrl, which throws. */
+export function isGoogleAuthConfigured(): boolean {
+  return !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET;
+}
+
 /** Where Google should send the browser back after sign-in. */
 export function getRedirectUri(requestUrl: string): string {
   return new URL("/api/auth/google/callback", requestUrl).toString();
