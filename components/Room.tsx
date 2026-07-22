@@ -33,10 +33,6 @@ import ChatSheet, { ChatComposer, ChatMessageList } from "./ChatSheet";
 import Presence from "./Presence";
 import VideoBrowser from "./VideoBrowser";
 
-// How long the fullscreen chat overlay stays visible after activity before
-// fading out, mirroring a real player's auto-hiding controls.
-const CHAT_FADE_MS = 3000;
-
 export default function Room({ code }: { code: string }) {
   const roomId = useMemo(() => normalizeRoomCode(code), [code]);
   const [userId] = useState(() => getUserId());
@@ -298,43 +294,6 @@ export default function Room({ code }: { code: string }) {
     setFullscreenChatOpen(false);
   }
 
-  // Our own leftover fullscreen UI -- just the exit-fullscreen corner
-  // button now (chat is deliberately exempt, see the chat-toggle button and
-  // panel below) -- fully disappears after a few seconds of no activity
-  // WHILE THE VIDEO IS PLAYING, and comes back the moment either side
-  // pauses -- pausing is the one video-state signal we actually have (via
-  // the synced `serverState.isPlaying`), unlike a bare "tap the video"
-  // gesture, which happens inside YouTube's cross-origin iframe and can
-  // never reach our code at all (confirmed: iframe content is a separate
-  // document, its clicks don't bubble to the parent page). So "reappear on
-  // pause" is the real, reliable equivalent of "tap to see the controls"
-  // here. While paused, it just stays visible indefinitely (no countdown)
-  // -- resuming playback restarts the fade-out clock.
-  const [chatFadeVisible, setChatFadeVisible] = useState(true);
-  const chatFadeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const revealChatOverlay = useCallback(() => {
-    setChatFadeVisible(true);
-    if (chatFadeTimeoutRef.current) clearTimeout(chatFadeTimeoutRef.current);
-    chatFadeTimeoutRef.current = setTimeout(() => setChatFadeVisible(false), CHAT_FADE_MS);
-  }, []);
-  useEffect(() => {
-    if (!isFullscreen) return;
-    // Synchronizing with external state/timers (playback state, setTimeout),
-    // not deriving state from props -- entering fullscreen, pausing, and
-    // resuming are all external events that should affect the fade-out
-    // clock.
-    if (!serverState.isPlaying) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setChatFadeVisible(true);
-      if (chatFadeTimeoutRef.current) clearTimeout(chatFadeTimeoutRef.current);
-      return;
-    }
-    revealChatOverlay();
-    return () => {
-      if (chatFadeTimeoutRef.current) clearTimeout(chatFadeTimeoutRef.current);
-    };
-  }, [isFullscreen, serverState.isPlaying, revealChatOverlay]);
-
   // A brief on-video toast for new messages while fullscreen and the chat
   // overlay isn't already open (no need to announce what's already visible).
   const [fullscreenToast, setFullscreenToast] = useState<{ id: string; name: string; text: string } | null>(null);
@@ -591,51 +550,17 @@ export default function Room({ code }: { code: string }) {
                 below clears it while keeping the buttons at the same visual
                 spot.
 
-                Only the exit-fullscreen button actually fades now (the
-                chat-toggle button next to it is always visible, see its own
-                comment) -- reaching chat shouldn't require tapping the video
-                awake first. The hover zone still spans the FULL WIDTH
-                (inset-x-0), not just a tight box around the exit button, so
-                moving the mouse anywhere across this band reveals it. It
-                deliberately starts at top-24 (not top-0): YouTube renders
-                its OWN clickable volume/CC/settings icons up around y=10-40
-                during active playback (confirmed via screenshot) -- covering
-                that region too would silently swallow real taps meant for
-                those icons. top-24 stays below them. It also can't extend
-                any further DOWN without reaching YouTube's bottom control
-                bar (play, seek, volume, CC, settings) and blocking taps
-                meant for that either -- this band is the safe practical
-                ceiling between YouTube's own two rows of real controls.
-
-                Two things still genuinely can't be replicated, for the same
-                reason as before: movement over the video itself (the middle
-                of the screen, a separate origin our code can't see into),
-                and YouTube quietly showing its own controls mid-playback in
-                response to a tap we never see -- only postMessage'd player
-                STATE reaches us (which is exactly what the pause-based
-                reveal already uses), not raw input events.
-
-                onClick={revealChatOverlay} here too (not onPointerDown --
-                that would race with the exit button's own onClick the same
-                way removing it from the chat button fixed earlier): when
-                the exit button is faded (pointer-events-none), this wrapper
-                is the topmost hit-testable thing at that exact spot, so a
-                raw tap/click that lands there (no hover first, e.g. on a
-                touchscreen) needs its own fallback -- otherwise it's a dead
-                zone that does nothing instead of revealing it. Click bubbles
-                from the button to the wrapper AFTER the button's own handler
-                already ran, so this is safe. */}
+                Both buttons stay permanently visible -- an earlier version
+                auto-hid them after a few seconds of playback (mirroring a
+                real player's controls) and brought them back on tap/mouse
+                move, but that meant fullscreen chat and even exiting
+                fullscreen itself required waking the controls up first.
+                Reported as annoying on a real phone, so removed entirely:
+                these two actions are core navigation, not decorative
+                chrome. */}
             {isFullscreen && (
-              <div
-                onMouseMove={revealChatOverlay}
-                onClick={revealChatOverlay}
-                className="absolute inset-x-0 top-24 z-50 flex h-16 items-start justify-end gap-3 pr-3"
-              >
+              <div className="absolute inset-x-0 top-24 z-50 flex h-16 items-start justify-end gap-3 pr-3">
                 <button
-                  // Deliberately never tied to chatFadeVisible, unlike the
-                  // exit-fullscreen button beside it -- chat is a primary
-                  // interaction, not player chrome, so it shouldn't require
-                  // tapping the video first just to become reachable.
                   onClick={() => setFullscreenChatOpen((prev) => !prev)}
                   aria-label={fullscreenChatOpen ? "Close fullscreen chat" : "Open fullscreen chat"}
                   title={fullscreenChatOpen ? "Close fullscreen chat" : "Open fullscreen chat"}
@@ -650,13 +575,10 @@ export default function Room({ code }: { code: string }) {
                 </button>
 
                 <button
-                  onPointerDown={revealChatOverlay}
                   onClick={toggleFullscreen}
                   aria-label="Exit fullscreen"
                   title="Exit fullscreen"
-                  className={`flex h-11 w-11 items-center justify-center rounded-full bg-bg/60 text-text backdrop-blur-sm transition-opacity duration-200 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
-                    chatFadeVisible ? "opacity-100" : "pointer-events-none opacity-0"
-                  }`}
+                  className="flex h-11 w-11 items-center justify-center rounded-full bg-bg/60 text-text backdrop-blur-sm transition duration-150 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 >
                   <Minimize2 className="h-4 w-4" />
                 </button>
@@ -665,10 +587,9 @@ export default function Room({ code }: { code: string }) {
 
             {/* The actual fullscreen chat overlay, opened via the button
                 above. Translucent (not a solid panel) so it never fully
-                blocks the video. Unlike the exit-fullscreen button, this
-                never auto-fades -- once opened it stays fully visible and
-                usable until the toggle button explicitly closes it, so
-                chatting doesn't require repeatedly tapping the video awake. */}
+                blocks the video. Stays fully visible and usable the whole
+                time it's open -- no auto-fade, closed only by explicitly
+                tapping the toggle button again. */}
             {isFullscreen && fullscreenChatOpen && (
               <div className="absolute inset-y-0 right-0 z-40 flex w-full max-w-sm flex-col border-l border-white/6 bg-surface/50 backdrop-blur-md">
                 {/* No close button here on purpose -- it would sit in the
