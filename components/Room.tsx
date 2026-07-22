@@ -1,10 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import usePartySocket from "partysocket/react";
 import type { PartySocket } from "partysocket";
 import {
   Check,
+  LogOut,
   Loader2,
   Maximize2,
   MessageCircle,
@@ -38,6 +40,7 @@ import VideoBrowser from "./VideoBrowser";
 const CHAT_FADE_MS = 3000;
 
 export default function Room({ code }: { code: string }) {
+  const router = useRouter();
   const roomId = useMemo(() => normalizeRoomCode(code), [code]);
   const [userId] = useState(() => getUserId());
   // myName/myLanguage start at the same "nothing cached yet" values the
@@ -412,6 +415,15 @@ export default function Room({ code }: { code: string }) {
     }
   };
 
+  const handleLeaveRoom = () => {
+    // Closing the socket (component unmount, via usePartySocket's own
+    // cleanup) is all "leaving" needs -- the worker already marks the
+    // participant disconnected and posts "X left the room" on close, and
+    // the room code still works to rejoin later since nothing here is
+    // destructive.
+    router.push("/");
+  };
+
   return (
     <>
       {/* `fixed`-positioned overlays (NamePrompt) must live outside the
@@ -576,10 +588,10 @@ export default function Room({ code }: { code: string }) {
             {/* Brief on-video toast for a new message while fullscreen and
                 the chat overlay isn't already open. Left side, so it never
                 overlaps the fullscreen/chat buttons on the right. Dropped
-                down below YouTube's own title bar (see the buttons below for
-                why top-3 doesn't clear it). */}
+                down below YouTube's own top-right icon row (see the buttons
+                below for why top-3 doesn't clear it). */}
             {fullscreenToast && (
-              <div className="absolute left-3 top-24 z-30 max-w-[70%] rounded-2xl border border-white/6 bg-surface/90 px-3.5 py-2.5 backdrop-blur-sm">
+              <div className="absolute left-3 top-12 z-30 max-w-[70%] rounded-2xl border border-white/6 bg-surface/90 px-3.5 py-2.5 backdrop-blur-sm">
                 <p className="text-xs font-medium text-text-dim">{fullscreenToast.name}</p>
                 <p className="line-clamp-2 text-sm text-text">{fullscreenToast.text}</p>
               </div>
@@ -608,18 +620,24 @@ export default function Room({ code }: { code: string }) {
             {/* Fullscreen hides everything outside this container, including
                 the chat sidebar/tab — these two buttons are the only way to
                 reach chat or exit fullscreen while fullscreen. Sat at top-3
-                originally, but that overlaps YouTube's own title/channel
-                text (which can run two lines and reach ~90px tall) -- top-24
-                below clears it while keeping the buttons at the same visual
-                spot. Reveal duty lives entirely in the full-screen catcher
-                above now, so this wrapper doesn't need its own hover/click
-                handling -- it just needs to get out of that catcher's way
-                while faded (pointer-events-none), otherwise its own footprint
-                (even a supposedly-invisible one) would swallow the wake-up
-                tap before it reaches the catcher underneath. */}
+                originally, but that overlaps YouTube's OWN clickable
+                volume/CC/settings icon row up around y=10-40 during active
+                playback (confirmed via screenshot) -- top-12 sits just below
+                that row, close without covering (or blocking taps meant
+                for) those icons. It CAN still overlap YouTube's separate
+                title/channel text overlay in the rare case of a two-line
+                title (up to ~90px tall) -- accepted as a minor, occasional
+                cosmetic overlap, since that text isn't interactive the way
+                the icon row is. Reveal duty lives entirely in the
+                full-screen catcher above now, so this wrapper doesn't need
+                its own hover/click handling -- it just needs to get out of
+                that catcher's way while faded (pointer-events-none),
+                otherwise its own footprint (even a supposedly-invisible
+                one) would swallow the wake-up tap before it reaches the
+                catcher underneath. */}
             {isFullscreen && (
               <div
-                className={`absolute right-3 top-24 z-50 flex items-start gap-3 ${chatFadeVisible ? "" : "pointer-events-none"}`}
+                className={`absolute right-3 top-12 z-50 flex items-start gap-3 ${chatFadeVisible ? "" : "pointer-events-none"}`}
               >
                 <button
                   // No onPointerDown reveal here on purpose -- this button's
@@ -752,6 +770,21 @@ export default function Room({ code }: { code: string }) {
                 )}
               </div>
             )}
+
+            {/* Visible to host and guest alike (unlike the picker above),
+                since anyone should be able to step out. Not accent-colored
+                on purpose -- accent is reserved for playing/synced/presence
+                state, not a routine navigation action. */}
+            <div className={`px-4 py-4 ${isHost ? "" : "border-t border-white/6"}`}>
+              <button
+                type="button"
+                onClick={handleLeaveRoom}
+                className="flex w-full items-center justify-center gap-2 rounded-full border border-white/6 px-4 py-3 text-sm font-medium text-text-dim transition duration-150 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              >
+                <LogOut className="h-4 w-4" />
+                Leave room
+              </button>
+            </div>
           </div>
         </div>
 
