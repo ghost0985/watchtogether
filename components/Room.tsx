@@ -87,9 +87,18 @@ export default function Room({ code }: { code: string }) {
   // descendants, which broke the fullscreen video container (it was being
   // sized relative to this column instead of the real viewport, so it
   // wasn't actually clipped to the screen). Stripping the class once the
-  // animation ends removes the transform for good; visually seamless since
-  // the animation's resting frame already matches the un-animated default.
+  // animation is done removes the transform for good; visually seamless
+  // since the animation's resting frame already matches the un-animated
+  // default. A plain timeout, not onAnimationEnd: that event depends on the
+  // browser actually firing it, which isn't guaranteed on every device/OS
+  // combination, and never fires at all when prefers-reduced-motion turns
+  // the animation off entirely (animation: none) -- a fixed delay works
+  // unconditionally either way, with a little headroom past 400ms.
   const [roomEnterDone, setRoomEnterDone] = useState(false);
+  useEffect(() => {
+    const timeout = setTimeout(() => setRoomEnterDone(true), 500);
+    return () => clearTimeout(timeout);
+  }, []);
 
   const playerRef = useRef<PlayerHandle>(null);
   const videoContainerRef = useRef<HTMLDivElement>(null);
@@ -424,7 +433,6 @@ export default function Room({ code }: { code: string }) {
       <div className="flex flex-1 flex-col lg:flex-row lg:items-start lg:gap-4 lg:py-4">
         <div
           className={`flex min-h-full flex-1 flex-col lg:rounded-2xl lg:border lg:border-white/6 ${roomEnterDone ? "" : "animate-room-enter"}`}
-          onAnimationEnd={() => setRoomEnterDone(true)}
         >
           {/* Header: room code + presence + connection status */}
           <header className="flex items-center justify-between gap-3 border-b border-white/6 px-4 py-4">
