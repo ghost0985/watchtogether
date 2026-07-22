@@ -79,6 +79,17 @@ export default function Room({ code }: { code: string }) {
   const [pickerMode, setPickerMode] = useState<"search" | "paste">("search");
   const [copied, setCopied] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // The one-time room-entrance animation (animate-room-enter, see
+  // globals.css) uses animation-fill-mode: both, so its final-frame
+  // `transform: translateY(0)` lingers on this div forever after the 400ms
+  // animation finishes -- even though it's a visual no-op, ANY non-none
+  // transform makes that div the CSS containing block for `position: fixed`
+  // descendants, which broke the fullscreen video container (it was being
+  // sized relative to this column instead of the real viewport, so it
+  // wasn't actually clipped to the screen). Stripping the class once the
+  // animation ends removes the transform for good; visually seamless since
+  // the animation's resting frame already matches the un-animated default.
+  const [roomEnterDone, setRoomEnterDone] = useState(false);
 
   const playerRef = useRef<PlayerHandle>(null);
   const videoContainerRef = useRef<HTMLDivElement>(null);
@@ -411,7 +422,10 @@ export default function Room({ code }: { code: string }) {
           scrolls the whole page; only the chat sidebar stays pinned (via
           `sticky` in ChatSheet) while that happens. */}
       <div className="flex flex-1 flex-col lg:flex-row lg:items-start lg:gap-4 lg:py-4">
-        <div className="flex min-h-full flex-1 flex-col animate-room-enter lg:rounded-2xl lg:border lg:border-white/6">
+        <div
+          className={`flex min-h-full flex-1 flex-col lg:rounded-2xl lg:border lg:border-white/6 ${roomEnterDone ? "" : "animate-room-enter"}`}
+          onAnimationEnd={() => setRoomEnterDone(true)}
+        >
           {/* Header: room code + presence + connection status */}
           <header className="flex items-center justify-between gap-3 border-b border-white/6 px-4 py-4">
             <div className="flex items-center gap-2">
