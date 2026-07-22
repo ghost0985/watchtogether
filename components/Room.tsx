@@ -585,51 +585,41 @@ export default function Room({ code }: { code: string }) {
               </div>
             )}
 
+            {/* Lets ANY tap or mouse move anywhere on the fullscreen video
+                wake the chat/exit icons back up, not just a specific spot
+                near them -- only rendered while they're faded, and gone the
+                instant they're revealed (pointer-events only matter while
+                this div exists at all, so there's nothing left to block
+                real interaction with the video/YouTube's own controls the
+                rest of the time). Sits below the icons and the open chat
+                panel (z-10 vs their z-40/z-50) so it never intercepts taps
+                meant for those once visible.
+
+                The wake-up tap is fully consumed here rather than also
+                reaching YouTube underneath (cross-origin iframe -- we can't
+                see or forward the event even if we wanted to). That
+                matches how every real hidden-chrome video player already
+                works: a first tap just brings the controls back, a second,
+                deliberate tap actually operates one. */}
+            {isFullscreen && !chatFadeVisible && (
+              <div onClick={revealChatOverlay} onMouseMove={revealChatOverlay} className="absolute inset-0 z-10" />
+            )}
+
             {/* Fullscreen hides everything outside this container, including
                 the chat sidebar/tab — these two buttons are the only way to
                 reach chat or exit fullscreen while fullscreen. Sat at top-3
                 originally, but that overlaps YouTube's own title/channel
-                text (which can run two lines and reach ~90px tall) -- pt-24
+                text (which can run two lines and reach ~90px tall) -- top-24
                 below clears it while keeping the buttons at the same visual
-                spot.
-
-                The hover zone spans the FULL WIDTH (inset-x-0), not just a
-                tight box around the buttons -- moving the mouse anywhere
-                across this band reveals them, closer to "any mouse
-                movement" like the user asked for. It deliberately starts at
-                top-24 (not top-0): YouTube renders its OWN clickable
-                volume/CC/settings icons up around y=10-40 during active
-                playback (confirmed via screenshot) -- covering that region
-                too would silently swallow real taps meant for those icons.
-                top-24 stays below them. It also can't extend any further
-                DOWN without reaching YouTube's bottom control bar (play,
-                seek, volume, CC, settings) and blocking taps meant for that
-                either -- this band is the safe practical ceiling between
-                YouTube's own two rows of real controls.
-
-                Two things still genuinely can't be replicated, for the same
-                reason as before: movement over the video itself (the middle
-                of the screen, a separate origin our code can't see into),
-                and YouTube quietly showing its own controls mid-playback in
-                response to a tap we never see -- only postMessage'd player
-                STATE reaches us (which is exactly what the pause-based
-                reveal already uses), not raw input events.
-
-                onClick={revealChatOverlay} here too (not onPointerDown --
-                that would race with the chat-toggle button's own onClick the
-                same way removing it from that button fixed earlier): when a
-                button underneath is faded (pointer-events-none), this
-                wrapper is the topmost hit-testable thing at that exact spot,
-                so a raw tap/click that lands there (no hover first, e.g. on
-                a touchscreen) needs its own fallback -- otherwise it's a
-                dead zone that does nothing instead of revealing or exiting.
-                Click bubbles from the button to the wrapper AFTER the
-                button's own handler already ran, so this is safe. */}
+                spot. Reveal duty lives entirely in the full-screen catcher
+                above now, so this wrapper doesn't need its own hover/click
+                handling -- it just needs to get out of that catcher's way
+                while faded (pointer-events-none), otherwise its own footprint
+                (even a supposedly-invisible one) would swallow the wake-up
+                tap before it reaches the catcher underneath. */}
             {isFullscreen && (
               <div
-                onMouseMove={revealChatOverlay}
-                onClick={revealChatOverlay}
-                className="absolute inset-x-0 top-24 z-50 flex h-16 items-start justify-end gap-3 pr-3"
+                className={`absolute right-3 top-24 z-50 flex items-start gap-3 ${chatFadeVisible ? "" : "pointer-events-none"}`}
               >
                 <button
                   // No onPointerDown reveal here on purpose -- this button's
