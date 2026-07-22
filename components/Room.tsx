@@ -229,12 +229,31 @@ export default function Room({ code }: { code: string }) {
   }, []);
 
   const toggleFullscreen = useCallback(() => {
-    if (!document.fullscreenElement) {
-      videoContainerRef.current?.requestFullscreen().catch(() => {});
-    } else {
-      document.exitFullscreen().catch(() => {});
+    if (isFullscreen) {
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+      } else {
+        // We're in the CSS-only fallback below (no real fullscreenElement
+        // to exit, since requestFullscreen either isn't supported or
+        // rejected) -- just clear our own state directly.
+        setIsFullscreen(false);
+      }
+      return;
     }
-  }, []);
+
+    // iOS Safari doesn't support the Fullscreen API for arbitrary elements
+    // (only <video> tags, via a separate non-standard webkit-only API) --
+    // requestFullscreen is either missing or silently rejects there. Either
+    // way, fall back to a plain CSS "take over the screen" mode instead of
+    // a dead button: the fullscreenchange listener above only ever fires
+    // for a REAL transition, so it won't interfere with this fallback.
+    const supportsFullscreen = document.fullscreenEnabled && !!videoContainerRef.current?.requestFullscreen;
+    if (!supportsFullscreen) {
+      setIsFullscreen(true);
+      return;
+    }
+    videoContainerRef.current!.requestFullscreen().catch(() => setIsFullscreen(true));
+  }, [isFullscreen]);
 
   // Chat is "visible" (so new messages count as seen, no badge/toast needed)
   // when: desktop's permanent sidebar is showing (not fullscreen), mobile's
@@ -464,6 +483,14 @@ export default function Room({ code }: { code: string }) {
               YouTubePlayer's fs:0) overrides both, since this exact div is
               what gets handed to the Fullscreen API.
 
+              The `fixed inset-0` fullscreen styling applies whether we got
+              a real OS-level fullscreen element or fell back to the
+              CSS-only mode (see toggleFullscreen) -- when it IS a real
+              fullscreen element, the browser already isolates it from the
+              rest of the page, so `fixed` just fills that isolated
+              viewport; when it's the fallback, `fixed` is what makes it
+              actually cover the screen at all, since nothing else does.
+
               Play/pause/seek use YouTube's own native controls (no custom
               overlay competing with them for space) — see YouTubePlayer's
               checkForUserAction for how those still stay in sync across
@@ -471,7 +498,11 @@ export default function Room({ code }: { code: string }) {
               handlers anymore. */}
           <div
             ref={videoContainerRef}
-            className={`relative w-full bg-bg ${isFullscreen ? "h-screen" : sheetExpanded ? "h-20 lg:aspect-video" : "aspect-video"}`}
+            className={
+              isFullscreen
+                ? "fixed inset-0 z-50 h-screen w-screen bg-bg"
+                : `relative w-full bg-bg ${sheetExpanded ? "h-20 lg:aspect-video" : "aspect-video"}`
+            }
           >
             {hasVideo ? (
               <YouTubePlayer
@@ -688,7 +719,7 @@ export default function Room({ code }: { code: string }) {
                         value={videoInput}
                         onChange={(e) => setVideoInput(e.target.value)}
                         placeholder="Paste a YouTube link"
-                        className="min-w-0 flex-1 rounded-2xl border border-white/6 bg-surface-2 px-4 py-3 text-sm text-text placeholder:text-text-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                        className="min-w-0 flex-1 rounded-2xl border border-white/6 bg-surface-2 px-4 py-3 text-base text-text placeholder:text-text-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                       />
                       <button
                         type="submit"

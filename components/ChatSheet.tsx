@@ -111,7 +111,7 @@ export function ChatComposer({ onSend }: { onSend: (text: string) => void }) {
         onChange={(e) => setText(e.target.value)}
         placeholder="Message"
         maxLength={500}
-        className="min-w-0 flex-1 rounded-full border border-white/6 bg-surface-2 px-4 py-2.5 text-[15px] text-text placeholder:text-text-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+        className="min-w-0 flex-1 rounded-full border border-white/6 bg-surface-2 px-4 py-2.5 text-base text-text placeholder:text-text-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
       />
       <button
         type="submit"
