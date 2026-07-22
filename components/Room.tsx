@@ -447,18 +447,37 @@ export default function Room({ code }: { code: string }) {
           className={`flex min-h-full flex-1 flex-col lg:rounded-2xl lg:border lg:border-white/6 ${roomEnterDone ? "" : "animate-room-enter"}`}
         >
           {/* Header: room code + presence + connection status */}
-          <header className="flex items-center justify-between gap-3 border-b border-white/6 px-4 py-4">
-            <div className="flex items-center gap-2">
-              <span className="rounded-2xl border border-white/6 bg-surface px-3 py-1.5 font-mono text-base tracking-[0.2em] text-text">
+          <header className="flex items-center justify-between gap-2 border-b border-white/6 px-3 py-4">
+            <div className="flex items-center gap-1.5">
+              {/* Leave room: anyone can step out. Just navigates home --
+                  closing the socket already makes the worker mark the
+                  participant disconnected and post its own "left the room"
+                  system message, and the room code still works to rejoin
+                  later. Not accent-colored on purpose -- accent is reserved
+                  for playing/synced/presence state, not routine navigation. */}
+              <button
+                onClick={handleLeaveRoom}
+                aria-label="Leave room"
+                title="Leave room"
+                className="flex h-11 w-11 items-center justify-center rounded-full bg-surface-2 text-text-dim transition duration-150 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
+              <span className="flex items-center gap-1.5 rounded-2xl border border-white/6 bg-surface py-1.5 pl-2.5 pr-1.5 font-mono text-base tracking-[0.15em] text-text">
                 {roomId}
+                {/* Nested inside the room-code chip rather than its own
+                    separate pill -- with the leave button added to this
+                    side too, a standalone badge (own border/padding/gap)
+                    pushed the header past 390px and clipped the chat
+                    toggle off the right edge entirely. */}
+                {isHost && (
+                  <span className="rounded-full bg-surface-2 px-1.5 py-0.5 font-sans text-[10px] font-medium tracking-normal text-text-dim">
+                    HOST
+                  </span>
+                )}
               </span>
-              {isHost && (
-                <span className="rounded-full bg-surface-2 px-2.5 py-1 text-xs font-medium text-text-dim">
-                  Host
-                </span>
-              )}
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5">
               <Presence participants={serverState.participants} synced={synced} />
               <button
                 onClick={voice.toggleMic}
@@ -770,21 +789,6 @@ export default function Room({ code }: { code: string }) {
                 )}
               </div>
             )}
-
-            {/* Visible to host and guest alike (unlike the picker above),
-                since anyone should be able to step out. Not accent-colored
-                on purpose -- accent is reserved for playing/synced/presence
-                state, not a routine navigation action. */}
-            <div className={`px-4 py-4 ${isHost ? "" : "border-t border-white/6"}`}>
-              <button
-                type="button"
-                onClick={handleLeaveRoom}
-                className="flex w-full items-center justify-center gap-2 rounded-full border border-white/6 px-4 py-3 text-sm font-medium text-text-dim transition duration-150 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-              >
-                <LogOut className="h-4 w-4" />
-                Leave room
-              </button>
-            </div>
           </div>
         </div>
 
