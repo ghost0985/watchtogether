@@ -17,6 +17,18 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "WatchTogether",
   description: "Watch YouTube in perfect sync — a private two-person watch party.",
+  // iOS specifically wants these (in addition to manifest.json's
+  // display: "standalone") to reliably launch chrome-free from an
+  // "Add to Home Screen" icon -- without them, Safari's own tab/address
+  // bar can still peek through on some iOS versions even in standalone
+  // mode. Only affects the home-screen-launched app; opening the site
+  // directly in Safari always shows Safari's own chrome regardless (an
+  // Apple restriction, not something any website can override).
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "WatchTogether",
+  },
 };
 
 export const viewport: Viewport = {
