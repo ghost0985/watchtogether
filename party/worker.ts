@@ -53,6 +53,12 @@ export class WatchRoom extends DurableObject<Env> {
   /** Reverse lookup: a socket doesn't carry its own userId, unlike PartyKit's
    * `Connection.setState()`. */
   userIdBySocket = new Map<WebSocket, string>();
+  /** The very first person to ever connect to this room. `state.hostId` can
+   * move away from them temporarily (see migrateHost, when they disconnect
+   * for good), but they reclaim it immediately the moment they reconnect
+   * (see `fetch`) -- set once, never reassigned, for this Durable Object
+   * instance's lifetime (a cold start resets it along with everything else). */
+  originalHostId: string | null = null;
 
   private snapshot(): string {
     const message: ServerMessage = {
@@ -122,16 +128,35 @@ export class WatchRoom extends DurableObject<Env> {
     this.userIdBySocket.set(server, userId);
     this.connectionsByUserId.set(userId, server);
 
-    // First person into the room becomes host (persists across their reconnects
-    // because the id is stable in their localStorage).
-    if (!this.state.hostId) {
-      this.state.hostId = userId;
-    }
-
     // Ensure a roster entry exists, but don't mark them "joined" (and don't
     // announce it) until they've picked a name — the socket may be open purely
     // to keep video sync going before the name prompt is answered.
     this.getOrCreateParticipant(userId);
+
+    if (this.originalHostId === null) {
+      this.originalHostId = userId;
+    }
+    if (this.originalHostId === userId && this.state.hostId !== userId) {
+      // The original host connecting (the very first time, or reclaiming
+      // after migrateHost handed control to the other person while they
+      // were gone) -- always wins host status immediately, even mid-session.
+      const reclaimedFrom = this.state.hostId;
+      this.state.hostId = userId;
+      if (reclaimedFrom) {
+        this.pushFeedItem({
+          kind: "system",
+          id: crypto.randomUUID(),
+          text: `${this.participants.get(userId)?.name || "The original host"} is back as host`,
+          timestamp: Date.now(),
+        });
+      }
+    } else if (!this.state.hostId) {
+      // Nobody's currently host (both people were gone -- see migrateHost)
+      // and this isn't the original host -- let them take the empty seat
+      // rather than leaving the room host-less until the original host
+      // specifically comes back.
+      this.state.hostId = userId;
+    }
 
     server.send(this.snapshot());
     server.send(JSON.stringify({ type: "feedHistory", items: this.feed } satisfies ServerMessage));
