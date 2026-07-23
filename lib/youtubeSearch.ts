@@ -6,12 +6,14 @@ const VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos";
 export type VideoResult = {
   videoId: string;
   title: string;
+  channelId: string;
   channelTitle: string;
   thumbnailUrl: string;
 };
 
 type RawSnippet = {
   title?: string;
+  channelId?: string;
   channelTitle?: string;
   thumbnails?: Record<string, { url?: string } | undefined>;
 };
@@ -44,6 +46,7 @@ function toVideoResult(videoId: string | undefined, snippet: RawSnippet | undefi
   return {
     videoId,
     title: decodeHtmlEntities(snippet?.title ?? ""),
+    channelId: snippet?.channelId ?? "",
     channelTitle: decodeHtmlEntities(snippet?.channelTitle ?? ""),
     thumbnailUrl: thumbnails.medium?.url ?? thumbnails.default?.url ?? thumbnails.high?.url ?? "",
   };
@@ -183,4 +186,71 @@ export async function getSubscriptionFeed(accessToken: string): Promise<VideoRes
     .slice(0, 30)
     .map((item) => toVideoResult(item.videoId, item.snippet))
     .filter((result): result is VideoResult => result !== null);
+}
+
+type ChannelResource = {
+  snippet?: { title?: string };
+  contentDetails?: { relatedPlaylists?: { uploads?: string } };
+};
+
+/**
+ * A specific channel's recent uploads, for the "view channel" tap on a video
+ * card. channels.list (1 unit) resolves the channel's name/uploads playlist
+ * -> playlistItems.list (1 unit) lists videos from it -- cheap (2 units
+ * total), skipping search.list (100 units) entirely, same trick as
+ * getSubscriptionFeed above. No OAuth needed: both calls work with just the
+ * API key, since a channel's uploads are public data regardless of who's asking.
+ */
+export async function getChannelUploads(
+  channelId: string
+): Promise<{ channelTitle: string; videos: VideoResult[] } | null> {
+  const apiKey = process.env.YOUTUBE_API_KEY;
+  if (!apiKey) return null;
+
+  const channelUrl = new URL("https://www.googleapis.com/youtube/v3/channels");
+  channelUrl.searchParams.set("part", "snippet,contentDetails");
+  channelUrl.searchParams.set("id", channelId);
+  channelUrl.searchParams.set("key", apiKey);
+
+  let channel: ChannelResource | undefined;
+  try {
+    const res = await fetch(channelUrl.toString());
+    if (!res.ok) {
+      console.error("YouTube channel lookup failed:", res.status, await res.text());
+      return null;
+    }
+    const data: unknown = await res.json();
+    channel = (data as { items?: ChannelResource[] })?.items?.[0];
+  } catch (err) {
+    console.error("YouTube channel lookup failed:", err);
+    return null;
+  }
+
+  const uploadsPlaylistId = channel?.contentDetails?.relatedPlaylists?.uploads;
+  if (!uploadsPlaylistId) return null;
+  const channelTitle = decodeHtmlEntities(channel?.snippet?.title ?? "");
+
+  const playlistUrl = new URL("https://www.googleapis.com/youtube/v3/playlistItems");
+  playlistUrl.searchParams.set("part", "snippet");
+  playlistUrl.searchParams.set("playlistId", uploadsPlaylistId);
+  playlistUrl.searchParams.set("maxResults", "50");
+  playlistUrl.searchParams.set("key", apiKey);
+
+  let videos: VideoResult[] = [];
+  try {
+    const res = await fetch(playlistUrl.toString());
+    if (res.ok) {
+      const data: unknown = await res.json();
+      const items = (data as { items?: PlaylistItem[] })?.items ?? [];
+      videos = items
+        .map((item) => toVideoResult(item.snippet?.resourceId?.videoId, item.snippet))
+        .filter((result): result is VideoResult => result !== null);
+    } else {
+      console.error("YouTube channel uploads failed:", res.status, await res.text());
+    }
+  } catch (err) {
+    console.error("YouTube channel uploads failed:", err);
+  }
+
+  return { channelTitle, videos };
 }

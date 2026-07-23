@@ -9,41 +9,69 @@ type Props = {
   onSelect: (videoId: string) => void;
 };
 
-function VideoCard({ video, onSelect }: { video: VideoResult; onSelect: (videoId: string) => void }) {
+function VideoCard({
+  video,
+  onSelect,
+  onViewChannel,
+}: {
+  video: VideoResult;
+  onSelect: (videoId: string) => void;
+  onViewChannel: (channelId: string, channelTitle: string) => void;
+}) {
   return (
-    <button
-      onClick={() => onSelect(video.videoId)}
-      className="flex w-full flex-col gap-2 rounded-xl text-left transition duration-150 ease-out active:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
-    >
-      {video.thumbnailUrl ? (
-        // Plain <img>, not next/image: one-off external thumbnails from
-        // YouTube's CDN, not worth a remotePatterns config entry. loading="lazy"
-        // matters more now that a search can return up to 50 of these -- without
-        // it, every thumbnail downloads immediately regardless of scroll
-        // position, burning phone data on results never actually scrolled to.
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={video.thumbnailUrl}
-          alt=""
-          loading="lazy"
-          className="aspect-video w-full rounded-xl object-cover"
-        />
-      ) : (
-        <div className="aspect-video w-full rounded-xl bg-surface" />
-      )}
-      <div className="min-w-0">
+    // A plain div, not a button -- the thumbnail/title and the channel name
+    // are two separately-tappable targets below (picks the video vs. browses
+    // that channel's other uploads), and a button can't contain a button.
+    <div className="flex w-full flex-col gap-1.5">
+      <button
+        onClick={() => onSelect(video.videoId)}
+        className="flex w-full flex-col gap-2 rounded-xl text-left transition duration-150 ease-out active:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+      >
+        {video.thumbnailUrl ? (
+          // Plain <img>, not next/image: one-off external thumbnails from
+          // YouTube's CDN, not worth a remotePatterns config entry. loading="lazy"
+          // matters more now that a search can return up to 50 of these -- without
+          // it, every thumbnail downloads immediately regardless of scroll
+          // position, burning phone data on results never actually scrolled to.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={video.thumbnailUrl}
+            alt=""
+            loading="lazy"
+            className="aspect-video w-full rounded-xl object-cover"
+          />
+        ) : (
+          <div className="aspect-video w-full rounded-xl bg-surface" />
+        )}
         <p className="truncate text-sm text-text">{video.title}</p>
+      </button>
+      {video.channelId ? (
+        <button
+          onClick={() => onViewChannel(video.channelId, video.channelTitle)}
+          className="truncate text-left text-xs text-text-dim underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+        >
+          {video.channelTitle}
+        </button>
+      ) : (
         <p className="truncate text-xs text-text-dim">{video.channelTitle}</p>
-      </div>
-    </button>
+      )}
+    </div>
   );
 }
 
-function VideoGrid({ videos, onSelect }: { videos: VideoResult[]; onSelect: (videoId: string) => void }) {
+function VideoGrid({
+  videos,
+  onSelect,
+  onViewChannel,
+}: {
+  videos: VideoResult[];
+  onSelect: (videoId: string) => void;
+  onViewChannel: (channelId: string, channelTitle: string) => void;
+}) {
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
       {videos.map((video) => (
-        <VideoCard key={video.videoId} video={video} onSelect={onSelect} />
+        <VideoCard key={video.videoId} video={video} onSelect={onSelect} onViewChannel={onViewChannel} />
       ))}
     </div>
   );
@@ -57,10 +85,12 @@ function CategorySection({
   state,
   errorText,
   onSelect,
+  onViewChannel,
 }: {
   state: RowState;
   errorText: string;
   onSelect: (videoId: string) => void;
+  onViewChannel: (channelId: string, channelTitle: string) => void;
 }) {
   if (state.status === "error") {
     return <p className="text-xs text-text-dim">{errorText}</p>;
@@ -72,7 +102,7 @@ function CategorySection({
       </div>
     );
   }
-  return <VideoGrid videos={state.videos} onSelect={onSelect} />;
+  return <VideoGrid videos={state.videos} onSelect={onSelect} onViewChannel={onViewChannel} />;
 }
 
 function TabButton({
@@ -123,6 +153,44 @@ export default function VideoBrowser({ onSelect }: Props) {
   const [googleAuthError, setGoogleAuthError] = useState(false);
 
   const [activeTab, setActiveTab] = useState<string>("trending");
+
+  // Set whenever a channel name is tapped from any grid (search, trending, a
+  // category, or subscriptions) -- takes over the whole picker until "Back",
+  // without disturbing whatever was showing underneath (e.g. tapping a
+  // channel from search results and going back returns to those same
+  // results, not the trending tab).
+  const [channelView, setChannelView] = useState<{
+    channelId: string;
+    channelTitle: string;
+    state: RowState;
+  } | null>(null);
+  const channelCacheRef = useRef<Map<string, { channelTitle: string; videos: VideoResult[] }>>(new Map());
+
+  const viewChannel = async (channelId: string, channelTitle: string) => {
+    const cached = channelCacheRef.current.get(channelId);
+    if (cached) {
+      setChannelView({ channelId, channelTitle: cached.channelTitle || channelTitle, state: { videos: cached.videos, status: cached.videos.length > 0 ? "idle" : "error" } });
+      return;
+    }
+
+    // Show the tapped video's own channelTitle immediately (it's already
+    // known) while the channel's own name/uploads load in behind it.
+    setChannelView({ channelId, channelTitle, state: ROW_LOADING });
+    try {
+      const res = await fetch("/api/channel-videos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channelId }),
+      });
+      const data = await res.json();
+      const found: VideoResult[] = Array.isArray(data?.results) ? data.results : [];
+      const resolvedTitle: string = data?.channelTitle || channelTitle;
+      channelCacheRef.current.set(channelId, { channelTitle: resolvedTitle, videos: found });
+      setChannelView({ channelId, channelTitle: resolvedTitle, state: { videos: found, status: found.length > 0 ? "idle" : "error" } });
+    } catch {
+      setChannelView({ channelId, channelTitle, state: { videos: [], status: "error" } });
+    }
+  };
 
   // /api/auth/google redirects back with this flag instead of crashing when
   // sign-in isn't configured (missing GOOGLE_CLIENT_ID/SECRET) -- surface it
@@ -274,7 +342,26 @@ export default function VideoBrowser({ onSelect }: Props) {
         </button>
       </form>
 
-      {showingSearch ? (
+      {channelView ? (
+        <>
+          <div className="flex items-center justify-between">
+            <p className="truncate text-xs text-text-dim">{channelView.channelTitle || "Channel"}</p>
+            <button
+              type="button"
+              onClick={() => setChannelView(null)}
+              className="shrink-0 text-xs text-text-dim underline-offset-2 hover:underline"
+            >
+              Back
+            </button>
+          </div>
+          <CategorySection
+            state={channelView.state}
+            errorText="Couldn’t load this channel’s videos right now."
+            onSelect={onSelect}
+            onViewChannel={viewChannel}
+          />
+        </>
+      ) : showingSearch ? (
         <>
           <div className="flex items-center justify-between">
             <p className="text-xs text-text-dim">Results for “{query}”</p>
@@ -291,7 +378,7 @@ export default function VideoBrowser({ onSelect }: Props) {
               Couldn’t find anything for that — try different words, or paste a link instead.
             </p>
           ) : (
-            <VideoGrid videos={searchResults} onSelect={onSelect} />
+            <VideoGrid videos={searchResults} onSelect={onSelect} onViewChannel={viewChannel} />
           )}
         </>
       ) : (
@@ -330,6 +417,7 @@ export default function VideoBrowser({ onSelect }: Props) {
               state={subscriptions}
               errorText="Couldn’t load your subscriptions — try trending or search instead."
               onSelect={onSelect}
+              onViewChannel={viewChannel}
             />
           )}
           {activeTab === "trending" && (
@@ -337,6 +425,7 @@ export default function VideoBrowser({ onSelect }: Props) {
               state={trending}
               errorText="Couldn’t load trending videos right now — try searching instead."
               onSelect={onSelect}
+              onViewChannel={viewChannel}
             />
           )}
           {VIDEO_CATEGORIES.map(
@@ -347,6 +436,7 @@ export default function VideoBrowser({ onSelect }: Props) {
                   state={categoryRows[category.id] ?? ROW_LOADING}
                   errorText={`Couldn’t load ${category.label} videos right now.`}
                   onSelect={onSelect}
+                  onViewChannel={viewChannel}
                 />
               )
           )}
