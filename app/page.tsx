@@ -41,7 +41,7 @@ export default function Home() {
       {/* Quiet middle — sets the mood, no hero block */}
       <div className="flex flex-1 flex-col items-center justify-center px-8 text-center">
         <p className="max-w-[260px] text-[15px] leading-relaxed text-text-dim">
-          A private room for two. Paste a video, hit play, watch it together.
+          A private room for two. browse through videos, hit play, watch it together.
         </p>
       </div>
 
