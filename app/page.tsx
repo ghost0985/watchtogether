@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Play, Ticket } from "lucide-react";
+import { History, Play, Ticket } from "lucide-react";
 import { generateRoomCode, getRecentRooms, normalizeRoomCode, timeAgo, type RecentRoom } from "@/lib/room";
 
 export default function Home() {
@@ -89,7 +89,10 @@ export default function Home() {
 
         {recentRooms.length > 0 && (
           <div className="flex flex-col gap-2 pt-1">
-            <span className="text-xs font-medium text-text-dim">Jump back in</span>
+            <div className="flex items-center gap-1.5 text-text-dim">
+              <History className="h-3.5 w-3.5" />
+              <span className="text-xs font-medium">Recent rooms — tap to rejoin</span>
+            </div>
             <div className="flex flex-wrap gap-2">
               {recentRooms.map((room) => (
                 <button
