@@ -84,6 +84,13 @@ export function loadYouTubeAPI(): Promise<YTNamespace> {
 
 const YT_ID_RE = /^[a-zA-Z0-9_-]{11}$/;
 
+/** True if `host` is exactly `base` or a real subdomain of it -- plain
+ * `.endsWith(base)` would also match an unrelated domain like
+ * "fakeyoutube.com", since that string literally ends with "youtube.com" too. */
+function isHostOrSubdomain(host: string, base: string): boolean {
+  return host === base || host.endsWith(`.${base}`);
+}
+
 /**
  * Extracts an 11-char YouTube video id from a raw id or a variety of URL forms
  * (watch?v=, youtu.be/, /embed/, /shorts/, /live/). Returns null if not found.
@@ -105,7 +112,7 @@ export function parseYouTubeId(input: string): string | null {
     const id = url.pathname.slice(1).split("/")[0];
     return YT_ID_RE.test(id) ? id : null;
   }
-  if (host.endsWith("youtube.com") || host.endsWith("youtube-nocookie.com")) {
+  if (isHostOrSubdomain(host, "youtube.com") || isHostOrSubdomain(host, "youtube-nocookie.com")) {
     const v = url.searchParams.get("v");
     if (v && YT_ID_RE.test(v)) return v;
     const parts = url.pathname.split("/").filter(Boolean);

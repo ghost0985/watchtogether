@@ -30,6 +30,18 @@ export function getRedirectUri(requestUrl: string): string {
   return new URL("/api/auth/google/callback", requestUrl).toString();
 }
 
+/**
+ * Only ever allow redirecting back to a same-site relative path. Without
+ * this, an absolute or protocol-relative URL (e.g. `?returnTo=https://evil.example`
+ * or `?returnTo=//evil.example`) would be an open redirect -- since this
+ * value rides through a real Google sign-in screen first, that's a
+ * particularly convincing phishing setup, not just a cosmetic bug.
+ */
+export function sanitizeReturnTo(value: string | null): string {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) return "/";
+  return value;
+}
+
 /** Builds the URL that starts Google's sign-in flow. */
 export function buildAuthUrl(requestUrl: string, state: string): string {
   const url = new URL(AUTH_URL);

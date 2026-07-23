@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-import { exchangeCodeForTokens, GOOGLE_AUTH_COOKIE, GOOGLE_STATE_COOKIE } from "@/lib/googleAuth";
+import { exchangeCodeForTokens, GOOGLE_AUTH_COOKIE, GOOGLE_STATE_COOKIE, sanitizeReturnTo } from "@/lib/googleAuth";
 
 const AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 days; the refresh token keeps it usable
 
@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
   let stateOk = false;
   try {
     const parsed = stateCookie ? (JSON.parse(stateCookie) as { state?: string; returnTo?: string }) : null;
-    if (parsed?.returnTo) returnTo = parsed.returnTo;
+    if (parsed?.returnTo) returnTo = sanitizeReturnTo(parsed.returnTo);
     stateOk = !!code && !!returnedState && parsed?.state === returnedState;
   } catch {
     stateOk = false;

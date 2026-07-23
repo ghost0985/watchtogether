@@ -1,10 +1,10 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-import { buildAuthUrl, GOOGLE_STATE_COOKIE, isGoogleAuthConfigured } from "@/lib/googleAuth";
+import { buildAuthUrl, GOOGLE_STATE_COOKIE, isGoogleAuthConfigured, sanitizeReturnTo } from "@/lib/googleAuth";
 
 /** Starts Google sign-in: stash a CSRF state + where to return, then redirect to Google. */
 export async function GET(request: NextRequest) {
-  const returnTo = request.nextUrl.searchParams.get("returnTo") ?? "/";
+  const returnTo = sanitizeReturnTo(request.nextUrl.searchParams.get("returnTo"));
 
   if (!isGoogleAuthConfigured()) {
     const url = new URL(returnTo, request.url);
