@@ -1,14 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Play, Ticket } from "lucide-react";
-import { generateRoomCode, normalizeRoomCode } from "@/lib/room";
+import { generateRoomCode, getRecentRooms, normalizeRoomCode, timeAgo, type RecentRoom } from "@/lib/room";
 
 export default function Home() {
   const router = useRouter();
   const [showJoin, setShowJoin] = useState(false);
   const [joinCode, setJoinCode] = useState("");
+  // Starts empty (server has no localStorage to read) and fills in after
+  // mount, same hydration-safe pattern as Room.tsx's cached name/language.
+  const [recentRooms, setRecentRooms] = useState<RecentRoom[]>([]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setRecentRooms(getRecentRooms());
+  }, []);
 
   const createRoom = () => {
     router.push(`/room/${generateRoomCode()}`);
@@ -77,6 +85,24 @@ export default function Home() {
               Join
             </button>
           </form>
+        )}
+
+        {recentRooms.length > 0 && (
+          <div className="flex flex-col gap-2 pt-1">
+            <span className="text-xs font-medium text-text-dim">Jump back in</span>
+            <div className="flex flex-wrap gap-2">
+              {recentRooms.map((room) => (
+                <button
+                  key={room.code}
+                  onClick={() => router.push(`/room/${room.code}`)}
+                  className="flex items-center gap-2 rounded-full border border-white/6 bg-surface px-4 py-2.5 transition duration-150 ease-out active:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                >
+                  <span className="font-mono text-sm tracking-[0.15em] text-text">{room.code}</span>
+                  <span className="text-xs text-text-dim">{timeAgo(room.lastVisited)}</span>
+                </button>
+              ))}
+            </div>
+          </div>
         )}
       </div>
     </main>

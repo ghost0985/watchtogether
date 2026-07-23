@@ -105,3 +105,50 @@ export function setLanguagePref(code: string): void {
   if (typeof window === "undefined") return;
   localStorage.setItem(LANGUAGE_KEY, code);
 }
+
+const RECENT_ROOMS_KEY = "wt-recent-rooms";
+const MAX_RECENT_ROOMS = 3;
+
+export type RecentRoom = { code: string; lastVisited: number };
+
+/**
+ * Rooms visited recently, most-recent-first. Mainly useful once this is
+ * launched from a home-screen icon (standalone PWA mode) — there's no
+ * browser back button or address-bar history there, so without this,
+ * re-typing or re-pasting the link is the only way back into a room you
+ * just closed.
+ */
+export function getRecentRooms(): RecentRoom[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(RECENT_ROOMS_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (r): r is RecentRoom =>
+        !!r && typeof r === "object" && typeof r.code === "string" && typeof r.lastVisited === "number"
+    );
+  } catch {
+    return [];
+  }
+}
+
+/** Records a visit to `code`, bumping it to the front (deduped) and capping the list. */
+export function addRecentRoom(code: string): void {
+  if (typeof window === "undefined") return;
+  const rest = getRecentRooms().filter((r) => r.code !== code);
+  const updated = [{ code, lastVisited: Date.now() }, ...rest].slice(0, MAX_RECENT_ROOMS);
+  localStorage.setItem(RECENT_ROOMS_KEY, JSON.stringify(updated));
+}
+
+/** Coarse "how long ago", e.g. "5m ago", "2h ago", "yesterday". */
+export function timeAgo(epochMs: number): string {
+  const diffMins = Math.floor((Date.now() - epochMs) / 60_000);
+  if (diffMins < 1) return "just now";
+  if (diffMins < 60) return `${diffMins}m ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  return diffDays === 1 ? "yesterday" : `${diffDays}d ago`;
+}

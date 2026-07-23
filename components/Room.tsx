@@ -17,6 +17,7 @@ import {
   Share2,
 } from "lucide-react";
 import {
+  addRecentRoom,
   getDisplayName,
   getLanguagePref,
   getRealtimeHost,
@@ -61,6 +62,14 @@ export default function Room({ code }: { code: string }) {
     setMyLanguage(getLanguagePref());
     /* eslint-enable react-hooks/set-state-in-effect */
   }, []);
+
+  // Recorded regardless of naming status -- even a quick visit is worth
+  // remembering, since the landing page's "recent rooms" list is mainly for
+  // getting back into a room from the home-screen icon, where there's no
+  // browser back button to fall back on.
+  useEffect(() => {
+    addRecentRoom(roomId);
+  }, [roomId]);
 
   const [serverState, setServerState] = useState<RoomState>(INITIAL_ROOM_STATE);
   const [clockOffset, setClockOffset] = useState(0);
