@@ -84,7 +84,8 @@ export async function searchYouTubeVideos(query: string): Promise<VideoResult[]>
   const url = new URL(SEARCH_URL);
   url.searchParams.set("part", "snippet");
   url.searchParams.set("type", "video");
-  url.searchParams.set("maxResults", "12");
+  // 50 is YouTube's own hard cap per call, not an arbitrary choice here.
+  url.searchParams.set("maxResults", "50");
   url.searchParams.set("q", query);
   url.searchParams.set("key", apiKey);
 
