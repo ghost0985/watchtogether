@@ -192,7 +192,38 @@ export class WatchRoom extends DurableObject<Env> {
       text: `${participant.name} left the room`,
       timestamp: Date.now(),
     });
+
+    if (this.state.hostId === userId) this.migrateHost(userId);
+
     await this.broadcastState();
+  }
+
+  /**
+   * Hands host duties (the only one allowed to load a new video, see
+   * "loadVideo" below) to whoever else is actually still here, so a guest
+   * isn't permanently stuck watching whatever's already loaded just because
+   * the original host's phone died or they never came back. Only runs once
+   * the departing host's grace period has genuinely expired (see
+   * finalizeDisconnect) -- a brief network blip never triggers this.
+   *
+   * Clears hostId to null if nobody else is currently connected either (both
+   * gone) rather than leaving it pointing at the departed host forever --
+   * whoever reconnects first, either of the original two, then becomes host
+   * the normal way (see the `fetch` handler).
+   */
+  private migrateHost(departingUserId: string) {
+    const successor = Array.from(this.participants.values()).find(
+      (p) => p.userId !== departingUserId && p.connected
+    );
+    this.state.hostId = successor?.userId ?? null;
+    if (successor) {
+      this.pushFeedItem({
+        kind: "system",
+        id: crypto.randomUUID(),
+        text: `${successor.name} is now the host`,
+        timestamp: Date.now(),
+      });
+    }
   }
 
   private async handleMessage(sender: WebSocket, raw: string | ArrayBuffer) {
