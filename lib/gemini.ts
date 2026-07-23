@@ -1,9 +1,11 @@
 import "server-only";
 import { languageLabel } from "./languages";
 
-// Free-tier chat model, same choice as the chat-with-PDF project. Called via
-// plain REST fetch (no SDK) per this project's stack convention.
-const CHAT_MODEL = "gemini-flash-lite-latest";
+// Full Flash, not Flash Lite (the chat-with-PDF project's choice) -- translation
+// accuracy benefits more from the bigger model than this app's near-zero traffic
+// benefits from Lite's speed/rate-limit headroom. Called via plain REST fetch
+// (no SDK) per this project's stack convention.
+const CHAT_MODEL = "gemini-flash-latest";
 const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${CHAT_MODEL}:generateContent`;
 
 async function withRetry<T>(fn: () => Promise<T>, retries = 3, baseDelayMs = 800): Promise<T> {
@@ -60,21 +62,38 @@ function extractJsonObject(raw: string): unknown {
   }
 }
 
+/** A prior message, given as context only -- never translated itself. */
+export type ContextMessage = { name: string; text: string };
+
 /**
  * Translates one chat message into each of `targetLanguages` in a single
  * Gemini call (batched, so a busy chat doesn't multiply API calls per
  * message per recipient). Returns whatever translations could be parsed —
  * on any failure (missing key, rate limit, bad response) returns {} so chat
  * degrades to "no translation" instead of failing to send.
+ *
+ * `context` (optional, most-recent-last) is a few prior messages from the
+ * same conversation -- without it, each message is translated in total
+ * isolation, so the model has no way to resolve something like an ambiguous
+ * "it" or a callback to what was just said. Purely for disambiguation, not
+ * translated or echoed back itself.
  */
 export async function translateChatMessage(
   text: string,
-  targetLanguages: string[]
+  targetLanguages: string[],
+  context: ContextMessage[] = []
 ): Promise<Record<string, string>> {
   if (targetLanguages.length === 0) return {};
 
   const targetList = targetLanguages.map((code) => `${code} (${languageLabel(code)})`).join(", ");
-  const prompt = `Translate the chat message below into each of these languages: ${targetList}.
+  const contextBlock =
+    context.length > 0
+      ? `For context only, here is the recent conversation leading up to this message (do NOT translate or repeat any of this back -- it's only so you can correctly resolve pronouns, slang, or references in the actual message below):
+${context.map((m) => `${m.name}: ${m.text}`).join("\n")}
+
+`
+      : "";
+  const prompt = `${contextBlock}Translate the chat message below into each of these languages: ${targetList}.
 
 Respond with ONLY a JSON object, no markdown formatting, no commentary. The object's keys must be exactly these language codes: ${targetLanguages.join(", ")}. Each value is the message translated into that language, preserving tone and casualness — this is a chat message between friends, not a formal document.
 

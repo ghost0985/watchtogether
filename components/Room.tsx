@@ -388,10 +388,17 @@ export default function Room({ code }: { code: string }) {
     let translations: Record<string, string> | undefined;
     if (targetLanguages.length > 0) {
       try {
+        // A few prior messages, oldest-first, so the model can resolve things
+        // like an ambiguous "it" or a callback to what was just said instead
+        // of translating this message in total isolation.
+        const context = feed
+          .filter((item) => item.kind === "chat")
+          .slice(-4)
+          .map((item) => ({ name: item.name, text: item.text }));
         const res = await fetch("/api/translate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, targetLanguages }),
+          body: JSON.stringify({ text, targetLanguages, context }),
         });
         const data = await res.json();
         if (data?.translations && typeof data.translations === "object") {
