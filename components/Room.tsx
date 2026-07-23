@@ -34,6 +34,7 @@ import YouTubePlayer, { type PlayerHandle, type UserAction } from "./YouTubePlay
 import NamePrompt from "./NamePrompt";
 import ChatSheet, { ChatComposer, ChatMessageList } from "./ChatSheet";
 import Presence from "./Presence";
+import RoomFull from "./RoomFull";
 import VideoBrowser from "./VideoBrowser";
 
 // How long the fullscreen chat overlay stays visible after activity before
@@ -75,6 +76,11 @@ export default function Room({ code }: { code: string }) {
   const [clockOffset, setClockOffset] = useState(0);
   const [connected, setConnected] = useState(false);
   const [active, setActive] = useState(false);
+  // This room already has its two people -- the server tells us this once,
+  // then closes the socket. `enabled: false` (passed to usePartySocket
+  // below) stops it from just retrying forever and showing a permanent
+  // "reconnecting..." banner for a room that will never let us in.
+  const [roomFull, setRoomFull] = useState(false);
 
   const [feed, setFeed] = useState<FeedItem[]>([]);
   // On mobile this drives a Watch/Chat tab switch (see the header's Chat
@@ -133,6 +139,7 @@ export default function Room({ code }: { code: string }) {
     host: getRealtimeHost(),
     room: roomId,
     query: { userId },
+    enabled: !roomFull,
     onOpen: () => {
       setConnected(true);
       // Reconnects (and returning users) skip the name prompt — announce silently.
@@ -164,6 +171,10 @@ export default function Room({ code }: { code: string }) {
       }
       if (message.type === "rtc-signal") {
         voiceHandleSignalRef.current(message.from, message.signal);
+        return;
+      }
+      if (message.type === "roomFull") {
+        setRoomFull(true);
         return;
       }
 
@@ -439,6 +450,11 @@ export default function Room({ code }: { code: string }) {
     // destructive.
     router.push("/");
   };
+
+  // Nothing else here works once the server has told us the room's full --
+  // no video, no chat, nothing to reconnect to -- so replace the whole room
+  // rather than trying to layer this on top of an otherwise-broken shell.
+  if (roomFull) return <RoomFull />;
 
   return (
     <>

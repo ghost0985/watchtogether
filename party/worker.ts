@@ -11,6 +11,15 @@ const MAX_FEED_ITEMS = 200;
 const MAX_NAME_LENGTH = 24;
 const MAX_MESSAGE_LENGTH = 500;
 const VALID_LANGUAGE_CODES = new Set(LANGUAGES.map((l) => l.code));
+// This app is built and tested for exactly two people (see CLAUDE.md) --
+// enforced here so a stray link never lets a third person wander into
+// someone else's room. Based on distinct userIds ever seen in this room
+// (this.participants), not live socket count: a room is "claimed" by
+// whichever two people first joined it, for as long as this Durable Object
+// instance stays warm, even if one of them is currently disconnected --
+// each room code is generated fresh per watch session (see lib/room.ts's
+// generateRoomCode), never meant to be reused by a different pair.
+const MAX_PARTICIPANTS = 2;
 // A dropped socket doesn't always mean someone actually left -- iOS Safari
 // kills sockets on backgrounding, and cellular connections blip, both of
 // which reconnect within a few seconds. Without this grace period, every
@@ -97,6 +106,18 @@ export class WatchRoom extends DurableObject<Env> {
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
     server.accept();
+
+    // A brand-new person, but the room's two seats are already taken --
+    // still complete the WebSocket handshake (a plain rejected upgrade gives
+    // client-side JS no way to read *why* it failed, so usePartySocket would
+    // just retry forever showing "reconnecting..."), then tell them plainly
+    // and close. An existing participant reconnecting is always let back in
+    // regardless of this check.
+    if (!this.participants.has(userId) && this.participants.size >= MAX_PARTICIPANTS) {
+      server.send(JSON.stringify({ type: "roomFull" } satisfies ServerMessage));
+      server.close(1000, "Room is full");
+      return new Response(null, { status: 101, webSocket: client });
+    }
 
     this.userIdBySocket.set(server, userId);
     this.connectionsByUserId.set(userId, server);

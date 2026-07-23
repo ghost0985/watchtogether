@@ -91,7 +91,10 @@ export type ServerMessage =
   /** A single new chat message or system notice, broadcast as it happens. */
   | { type: "feedItem"; item: FeedItem }
   /** Relayed 1:1 from another participant's "rtc-signal" client message. */
-  | { type: "rtc-signal"; from: string; signal: RtcSignal };
+  | { type: "rtc-signal"; from: string; signal: RtcSignal }
+  /** Sent (then the socket is closed) when a brand-new person tries to join
+   * a room that already has MAX_PARTICIPANTS distinct people in it. */
+  | { type: "roomFull" };
 
 export const INITIAL_ROOM_STATE: RoomState = {
   videoId: null,
