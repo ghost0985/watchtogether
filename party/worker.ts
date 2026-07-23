@@ -11,6 +11,13 @@ const MAX_FEED_ITEMS = 200;
 const MAX_NAME_LENGTH = 24;
 const MAX_MESSAGE_LENGTH = 500;
 const VALID_LANGUAGE_CODES = new Set(LANGUAGES.map((l) => l.code));
+// A dropped socket doesn't always mean someone actually left -- iOS Safari
+// kills sockets on backgrounding, and cellular connections blip, both of
+// which reconnect within a few seconds. Without this grace period, every
+// brief drop announced a "left the room" immediately followed by a "joined
+// the room" the moment usePartySocket reconnected, which read as someone
+// repeatedly leaving and rejoining even though they never really left.
+const LEAVE_GRACE_MS = 10_000;
 
 /**
  * Authoritative watch-party room. Holds playback state, the participant
@@ -131,6 +138,25 @@ export class WatchRoom extends DurableObject<Env> {
     if (this.connectionsByUserId.get(userId) === ws) {
       this.connectionsByUserId.delete(userId);
     }
+
+    const participant = this.participants.get(userId);
+    if (!participant?.connected) return;
+
+    // Don't mark them disconnected (or announce it) right away -- give a
+    // brief grace period for a quick reconnect (see LEAVE_GRACE_MS) to
+    // happen invisibly first. If they're back before this fires, `setName`
+    // on the new connection sees `connected` still true and skips its own
+    // "joined the room" announcement too, so a quick blip produces neither
+    // message.
+    setTimeout(() => {
+      void this.finalizeDisconnect(userId);
+    }, LEAVE_GRACE_MS);
+  }
+
+  private async finalizeDisconnect(userId: string) {
+    // A reconnect during the grace period already replaced this entry with
+    // a live connection -- nothing to do.
+    if (this.connectionsByUserId.has(userId)) return;
 
     const participant = this.participants.get(userId);
     if (!participant?.connected) return;
