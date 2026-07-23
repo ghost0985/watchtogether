@@ -17,9 +17,17 @@ function VideoCard({ video, onSelect }: { video: VideoResult; onSelect: (videoId
     >
       {video.thumbnailUrl ? (
         // Plain <img>, not next/image: one-off external thumbnails from
-        // YouTube's CDN, not worth a remotePatterns config entry.
+        // YouTube's CDN, not worth a remotePatterns config entry. loading="lazy"
+        // matters more now that a search can return up to 50 of these -- without
+        // it, every thumbnail downloads immediately regardless of scroll
+        // position, burning phone data on results never actually scrolled to.
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={video.thumbnailUrl} alt="" className="aspect-video w-full rounded-xl object-cover" />
+        <img
+          src={video.thumbnailUrl}
+          alt=""
+          loading="lazy"
+          className="aspect-video w-full rounded-xl object-cover"
+        />
       ) : (
         <div className="aspect-video w-full rounded-xl bg-surface" />
       )}
