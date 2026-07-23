@@ -37,7 +37,7 @@ import VideoBrowser from "./VideoBrowser";
 
 // How long the fullscreen chat overlay stays visible after activity before
 // fading out, mirroring a real player's auto-hiding controls.
-const CHAT_FADE_MS = 3000;
+const CHAT_FADE_MS = 8000;
 
 export default function Room({ code }: { code: string }) {
   const router = useRouter();
